@@ -1,0 +1,8 @@
+{
+  "realm": "fairenrol",
+  "auth-server-url": "http://localhost:8081/",
+  "ssl-required": "none",
+  "resource": "fairenrol-app",
+  "public-client": true,
+  "confidential-port": 0
+}
