@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "node test-crypto.js"
+    "test": "node test-crypto.js && node test-fairenrol.js",
+    "test:crypto": "node test-crypto.js",
+    "test:invariants": "node test-fairenrol.js"
   },
   "dependencies": {
     "@tidecloak/react": "^0.14.33",

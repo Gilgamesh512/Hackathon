@@ -9,6 +9,7 @@ export default function RequestForm({
   actionNames,
   demoRegistrar,
   requesterName,
+  requesterId,
   onSubmitRequest,
   registrar = false,
 }) {
@@ -40,19 +41,29 @@ export default function RequestForm({
 
     setIsSubmitting(true);
 
+    // Cryptographic Authenticated Additional Data (AAD) binding
+    const aadMetadata = {
+      studentId: requestKind === "panel" ? "PANEL_ELECTION" : targetStudent,
+      courseId: requestKind === "panel" ? "PANEL_GOVERNANCE" : selectedCourse,
+      kind: requestKind,
+    };
+
     let encryptedPayload = null;
     if (includeEncryptedEvidence && confidentialEvidence.trim()) {
       encryptedPayload = await encryptConfidentialEvidence(
         confidentialEvidence.trim(),
-        APPROVER_SECRET_KEY
+        APPROVER_SECRET_KEY,
+        aadMetadata
       );
     }
 
     const base = {
       kind: requestKind,
       requester: requesterName,
+      requesterId: requesterId || (registrar ? demoRegistrar.id : "panel-member"),
       reason: reason.trim(),
       confidentialEvidence: encryptedPayload,
+      createdAt: new Date().toISOString(),
     };
 
     if (requestKind === "panel") {
@@ -84,7 +95,7 @@ export default function RequestForm({
       <div className="form-title">
         <div>
           <div className="eyebrow">
-            {registrar ? "ADMINISTRATIVE EXCEPTION REQUEST" : "NEW PROTECTED REQUEST"}
+            {registrar ? "ADMINISTRATIVE EXCEPTION REQUEST" : "NEW PROTECTED PROPOSAL"}
           </div>
           <h3>Submit Exception for Panel Quorum Review</h3>
         </div>
@@ -93,7 +104,7 @@ export default function RequestForm({
 
       <div className="form-grid">
         <label>
-          Requested Action
+          Requested Exception Type
           <select
             value={requestKind}
             onChange={(e) => setRequestKind(e.target.value)}
@@ -109,7 +120,7 @@ export default function RequestForm({
         {requestKind !== "panel" ? (
           <>
             <label>
-              Course
+              Target Course
               <select
                 value={selectedCourse}
                 onChange={(e) => setSelectedCourse(e.target.value)}
@@ -186,7 +197,7 @@ export default function RequestForm({
               checked={includeEncryptedEvidence}
               onChange={(e) => setIncludeEncryptedEvidence(e.target.checked)}
             />
-            Attach Confidential E2EE Supporting Evidence (Medical / Wellbeing / Disability Record)
+            Attach Confidential E2EE Supporting Evidence (AES-GCM-256 with Contextual AAD)
           </label>
 
           {includeEncryptedEvidence && (
@@ -206,7 +217,7 @@ export default function RequestForm({
           Governance Rule: Requesters cannot vote on their own submissions. Zero unilateral bypass.
         </span>
         <button className="button dark" type="submit" disabled={isSubmitting}>
-          {isSubmitting ? "Encrypting & Submitting…" : "Submit Exception for Quorum"}
+          {isSubmitting ? "Encrypting with AES-GCM & Submitting…" : "Submit Exception for Quorum"}
         </button>
       </div>
     </form>
