@@ -1,0 +1,31 @@
+version: "3.8"
+
+services:
+  juice-shop:
+    image: bkimminich/juice-shop:v17.1.1
+    container_name: sec-lab-juice-shop
+    restart: unless-stopped
+    ports:
+      # Bound to localhost only to prevent public internet exposure
+      - "127.0.0.1:3000:3000"
+    networks:
+      - sec-lab-target-net
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/rest/admin/application-version"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+networks:
+  sec-lab-target-net:
+    name: sec-lab-target-net
+    driver: bridge
+    internal: false # Target network isolated with firewall/bind policy

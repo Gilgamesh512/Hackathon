@@ -1,0 +1,40 @@
+id: custom-api-vault
+name: Custom SecureVault API (Vulnerable Micro-Target)
+version: 1.0.0
+kind: custom
+category:
+  - api
+  - authorization
+
+description: >-
+  Custom in-house target exposing a confidential document and student record storage API.
+  Deliberately features multi-tenant BOLA / IDOR flaws, mass assignment on role flags,
+  and missing rate limiting for scanner benchmark comparison.
+
+runtime:
+  type: nodejs-isolated
+  entrypoint: targets/custom-api/server.js
+  defaultPort: 4100
+  internalHost: 127.0.0.1
+  network: sec-lab-target-net
+
+access:
+  exposure: private
+  allowedProfiles:
+    - manual-api
+    - automated-api
+    - zap-baseline
+
+lifecycle:
+  healthcheckRequired: true
+  healthcheckEndpoint: /api/health
+  resetSupported: true
+  resetStrategy: in-memory-seed
+
+testing:
+  authorizedScopeRequired: true
+  destructiveTestsRequireApproval: false
+  expectedFindings:
+    - BOLA-01: Unauthorized access to other students' medical exception records via GET /api/records/:id
+    - MASS-ASSIGN-01: Privilege escalation via POST /api/profile (injecting { role: "admin" })
+    - RATE-LIMIT-01: Missing rate limiting on sensitive export endpoint

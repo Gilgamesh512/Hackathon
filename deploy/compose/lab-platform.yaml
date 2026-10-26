@@ -1,0 +1,53 @@
+version: "3.8"
+
+# ==============================================================================
+# Security Lab Platform - Isolated Network and Target Topology
+# Ensures Control Plane and Target Plane boundaries are strictly isolated.
+# Targets cannot reach host metadata services, sensitive internal networks, or Docker socket.
+# ==============================================================================
+
+networks:
+  sec-lab-mgmt-net:
+    name: sec-lab-mgmt-net
+    driver: bridge
+    internal: false # Management network for Lab Manager API, DB, and UI
+
+  sec-lab-target-net:
+    name: sec-lab-target-net
+    driver: bridge
+    internal: false # Target network strictly for vulnerable targets under test
+
+services:
+  # OWASP Juice Shop Target
+  target-juice-shop:
+    image: bkimminich/juice-shop:v17.1.1
+    container_name: sec-lab-juice-shop
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    networks:
+      - sec-lab-target-net
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 512M
+
+  # OWASP WebGoat Target
+  target-webgoat:
+    image: webgoat/webgoat:latest
+    container_name: sec-lab-webgoat
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8083:8080"
+    networks:
+      - sec-lab-target-net
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 768M

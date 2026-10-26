@@ -1,0 +1,44 @@
+id: owasp-juice-shop
+name: OWASP Juice Shop
+version: 17.1.1
+kind: external
+category:
+  - web
+  - api
+
+description: >-
+  OWASP Juice Shop is probably the most modern and sophisticated insecure web application!
+  Covers the entire OWASP Top 10 vulnerabilities along with many other security flaws found
+  in real-world applications.
+
+runtime:
+  type: docker-compose
+  composeFile: deploy/compose/juice-shop.yaml
+  serviceName: juice-shop
+  defaultPort: 3000
+  internalHost: juice-shop
+  network: sec-lab-target-net
+
+access:
+  exposure: private
+  allowedProfiles:
+    - manual-web
+    - automated-web
+    - zap-baseline
+    - zap-full
+
+lifecycle:
+  healthcheckRequired: true
+  healthcheckEndpoint: /rest/admin/application-version
+  resetSupported: true
+  resetStrategy: container-restart
+
+testing:
+  authorizedScopeRequired: true
+  destructiveTestsRequireApproval: true
+  expectedFindings:
+    - SQL Injection (Login bypass / product search)
+    - Cross-Site Scripting (Reflected & DOM XSS)
+    - Broken Object Level Authorization (BOLA)
+    - Sensitive Data Exposure in API responses
+    - Broken Authentication & Session Hijacking

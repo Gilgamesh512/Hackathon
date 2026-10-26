@@ -1,4 +1,5 @@
 // Unit test for FairEnrol cryptographic integrity and encryption logic
+import assert from "node:assert/strict";
 import {
   sha256,
   computeAuditHash,
@@ -12,7 +13,7 @@ async function runTests() {
 
   // 1. SHA-256 test
   const hash = await sha256("test-payload");
-  console.assert(hash && hash.length === 64, "SHA-256 output must be a 64-char hex string");
+  assert.ok(hash && hash.length === 64, "SHA-256 output must be a 64-char hex string");
   console.log("✓ SHA-256 hash generation verified:", hash.slice(0, 16) + "…");
 
   // 2. Hash chaining test
@@ -39,14 +40,14 @@ async function runTests() {
   // List ordered newest first
   const validChain = [block2, block1];
   const verificationValid = await verifyAuditChain(validChain);
-  console.assert(verificationValid.valid === true, "Chain must be cryptographically valid");
+  assert.equal(verificationValid.valid, true, "Chain must be cryptographically valid");
   console.log("✓ Valid audit chain verified (2 blocks):", verificationValid);
 
   // 3. Tampering detection test
   const tamperedBlock1 = { ...block1, reason: "Tampered reason by malicious attacker" };
   const tamperedChain = [block2, tamperedBlock1];
   const verificationTampered = await verifyAuditChain(tamperedChain);
-  console.assert(verificationTampered.valid === false, "Chain must detect tampering");
+  assert.equal(verificationTampered.valid, false, "Chain must detect tampering");
   console.log("✓ Tampering attack caught successfully:", verificationTampered.error);
 
   // 4. AES-GCM-256 Encryption & Decryption test
@@ -55,17 +56,18 @@ async function runTests() {
   const wrongKey = "INVALID_UNAUTHORIZED_KEY";
 
   const encrypted = await encryptConfidentialEvidence(secretText, key);
-  console.assert(encrypted.iv && encrypted.ciphertext, "Encrypted payload must contain IV and ciphertext");
+  assert.ok(encrypted.iv && encrypted.ciphertext, "Encrypted payload must contain IV and ciphertext");
   console.log("✓ AES-GCM-256 Encryption successful. Ciphertext length:", encrypted.ciphertext.length);
 
   // Decrypt with authorized key
   const decSuccess = await decryptConfidentialEvidence(encrypted, key);
-  console.assert(decSuccess.success === true && decSuccess.plaintext === secretText, "Decrypted text must match original");
+  assert.equal(decSuccess.success, true, "Authorized decryption must succeed");
+  assert.equal(decSuccess.plaintext, secretText, "Decrypted text must match original");
   console.log("✓ Authorized decryption succeeded:", decSuccess.plaintext);
 
   // Decrypt with unauthorized key
   const decFail = await decryptConfidentialEvidence(encrypted, wrongKey);
-  console.assert(decFail.success === false, "Unauthorized decryption must fail");
+  assert.equal(decFail.success, false, "Unauthorized decryption must fail");
   console.log("✓ Unauthorized decryption was blocked by Web Crypto API:", decFail.error);
 
   console.log("\nALL CRYPTOGRAPHIC TESTS PASSED (5/5)!");

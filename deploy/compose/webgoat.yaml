@@ -1,0 +1,27 @@
+version: "3.8"
+
+services:
+  webgoat:
+    image: webgoat/webgoat:latest
+    container_name: sec-lab-webgoat
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8083:8080"
+    networks:
+      - sec-lab-target-net
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 768M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/WebGoat/login"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+
+networks:
+  sec-lab-target-net:
+    external: true

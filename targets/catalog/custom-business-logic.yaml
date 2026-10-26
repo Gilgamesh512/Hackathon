@@ -1,0 +1,39 @@
+id: custom-business-logic
+name: Custom FairEnrol Insecure Enrolment Variant (Target Benchmark)
+version: 1.0.0
+kind: custom
+category:
+  - business-logic
+  - race-conditions
+
+description: >-
+  Deliberately vulnerable variant of course registration featuring time-of-check to time-of-use (TOCTOU)
+  race conditions, missing quorum verification on single-approver bypass, and unvalidated audit hashes.
+  Used specifically for penetration testing and automated security scanner evaluation.
+
+runtime:
+  type: in-process-runner
+  entrypoint: targets/custom-backend/server.js
+  defaultPort: 4200
+  internalHost: 127.0.0.1
+  network: sec-lab-target-net
+
+access:
+  exposure: private
+  allowedProfiles:
+    - automated-logic
+    - concurrency-race
+
+lifecycle:
+  healthcheckRequired: true
+  healthcheckEndpoint: /api/health
+  resetSupported: true
+  resetStrategy: state-reset
+
+testing:
+  authorizedScopeRequired: true
+  destructiveTestsRequireApproval: false
+  expectedFindings:
+    - RACE-01: TOCTOU race condition allowing 10 students to enrol into a 2-seat course concurrently
+    - QUORUM-BYPASS-01: Single approver proposal bypass allowing unvetted quota expansion
+    - AUDIT-TAMPER-01: Unanchored audit ledger silently accepting modified historical entries
