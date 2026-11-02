@@ -264,4 +264,104 @@ export class TestEngine {
       findings: run.findings,
     };
   }
+
+  /**
+   * Generates standard OASIS SARIF v2.1.0 JSON report
+   * Compatible with GitHub Security, DefectDojo, and VS Code SARIF viewers.
+   */
+  generateSarifReport(runId) {
+    const run = this.getTestRun(runId);
+    if (!run) return null;
+
+    const rules = [
+      {
+        id: "BOLA-01",
+        name: "BrokenObjectLevelAuthorization",
+        shortDescription: {
+          text: "Broken Object Level Authorization (BOLA / IDOR) on Sensitive Student Records",
+        },
+        fullDescription: {
+          text: "API endpoint fails to enforce object-level ownership checks, allowing one authenticated user to view other users' records.",
+        },
+        defaultConfiguration: { level: "error" },
+        helpUri: "https://owasp.org/API-Security/editions/2023/en/0xa1-broken-object-level-authorization/",
+        properties: {
+          cwe: ["CWE-284", "CWE-639"],
+          owasp: "API1:2023",
+          category: "Authorization",
+        },
+      },
+      {
+        id: "MASS-ASSIGN-01",
+        name: "InsecureMassAssignment",
+        shortDescription: {
+          text: "Privilege Escalation via Insecure Mass Assignment in User Profile",
+        },
+        fullDescription: {
+          text: "Direct assignment of client-supplied payload parameters directly into session entity allows non-privileged accounts to assume administrative roles.",
+        },
+        defaultConfiguration: { level: "error" },
+        helpUri: "https://owasp.org/API-Security/editions/2023/en/0xa3-broken-object-property-level-authorization/",
+        properties: {
+          cwe: ["CWE-915"],
+          owasp: "API3:2023",
+          category: "Object Injection / Authorization",
+        },
+      },
+    ];
+
+    const results = run.findings.map((finding) => {
+      const level = finding.severity === "CRITICAL" || finding.severity === "HIGH" ? "error" : "warning";
+      return {
+        ruleId: finding.testKey || "SEC-GENERIC",
+        level,
+        message: {
+          text: `[${finding.severity}] ${finding.title}: ${finding.description}`,
+        },
+        locations: [
+          {
+            physicalLocation: {
+              artifactLocation: {
+                uri: finding.testKey === "BOLA-01" ? "/api/records/:id" : "/api/profile",
+              },
+              region: {
+                startLine: 1,
+              },
+            },
+          },
+        ],
+        properties: {
+          findingId: finding.id,
+          evidenceRef: finding.evidenceRef,
+          evidenceChecksum: finding.checksum,
+          confidence: finding.confidence,
+        },
+      };
+    });
+
+    return {
+      $schema: "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+      version: "2.1.0",
+      runs: [
+        {
+          tool: {
+            driver: {
+              name: "FairEnrol Security Lab Engine",
+              version: "1.0.0",
+              informationUri: "https://github.com/rmit-hackathon-2026/fairenrol",
+              rules,
+            },
+          },
+          invocations: [
+            {
+              executionSuccessful: true,
+              startTimeUtc: run.startedAt,
+              endTimeUtc: run.finishedAt || new Date().toISOString(),
+            },
+          ],
+          results,
+        },
+      ],
+    };
+  }
 }

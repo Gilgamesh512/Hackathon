@@ -141,12 +141,73 @@ async function runLabTests() {
     console.log(`    TP=${metrics.truePositives}, FP=${metrics.falsePositives}, FN=${metrics.falseNegatives}`);
     console.log(`    Precision=${metrics.precision * 100}%, Recall=${metrics.recall * 100}%\n`);
 
+    // TEST 7: OASIS SARIF v2.1.0 Export Format Verification
+    testCount++;
+    console.log(`Test ${testCount}: OASIS SARIF v2.1.0 Security Report Validation`);
+    const mockRun = {
+      id: "run_sarif_test",
+      targetId: "custom-api-vault",
+      startedAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+      findings: [
+        {
+          id: "fnd_1",
+          testKey: "BOLA-01",
+          title: "Broken Object Level Authorization",
+          severity: "HIGH",
+          confidence: "CONFIRMED",
+          checksum: "abcdef123456",
+          evidenceRef: "ev_1",
+          description: "Unauthorized access to student record",
+        },
+      ],
+    };
+    engine.testRuns.set(mockRun.id, mockRun);
+    const sarif = engine.generateSarifReport(mockRun.id);
+
+    assert.equal(sarif.version, "2.1.0", "SARIF version must be 2.1.0");
+    assert.equal(sarif.runs.length, 1, "Must contain exactly 1 run");
+    assert.equal(sarif.runs[0].results.length, 1, "Must contain 1 result");
+    assert.equal(sarif.runs[0].results[0].ruleId, "BOLA-01");
+    console.log("  ✓ Standard OASIS SARIF v2.1.0 format verified with valid rule mappings.\n");
+
+    // TEST 8: Live Exploit Telemetry & Canary Decoy Exfiltration
+    testCount++;
+    console.log(`Test ${testCount}: Live Exploit Telemetry & Canary Decoy Exfiltration Trap`);
+    // Restart target to test telemetry endpoint and canary trap
+    const targetInst = await lifecycle.startTarget("custom-api-vault", 4198);
+
+    // Alice logs in
+    const loginRes = await fetch(`${targetInst.endpoint}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "alice" }),
+    });
+    const { token: aliceToken } = await loginRes.json();
+
+    // Alice probes Canary record
+    const canaryRes = await fetch(`${targetInst.endpoint}/api/records/rec_canary_999`, {
+      headers: { Authorization: `Bearer ${aliceToken}` },
+    });
+    const canaryData = await canaryRes.json();
+    assert.equal(canaryRes.status, 200);
+    assert.ok(canaryData.accessWarning.includes("TRAPWIRE_ALERT"), "Canary trapwire alert must trigger");
+
+    // Check telemetry feed
+    const telRes = await fetch(`${targetInst.endpoint}/api/telemetry`);
+    const telData = await telRes.json();
+    assert.ok(telData.telemetry.length >= 1, "Telemetry log must record the canary probe");
+    assert.equal(telData.telemetry[0].attackType, "CANARY_TOKEN_EXFILTRATION");
+    assert.ok(telData.telemetry[0].evidenceChecksum, "Telemetry entry must have SHA-256 evidence checksum");
+    console.log(`  ✓ Canary exfiltration sensor caught probe: ${telData.telemetry[0].payloadSummary}`);
+    console.log(`  ✓ Forensically anchored with SHA-256: ${telData.telemetry[0].evidenceChecksum.slice(0, 16)}…\n`);
+
     // Clean up running instance
     await lifecycle.stopTarget("custom-api-vault");
   }
 
   console.log("==================================================================");
-  console.log("  ALL LAB PLATFORM VERIFICATION TESTS PASSED SUCCESSFULLY! (6/6) ");
+  console.log(`  ALL LAB PLATFORM VERIFICATION TESTS PASSED SUCCESSFULLY! (${testCount}/${testCount}) `);
   console.log("==================================================================\n");
 
   setTimeout(() => {

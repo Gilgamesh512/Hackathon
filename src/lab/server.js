@@ -128,7 +128,18 @@ export function createLabManagerServer() {
         return sendJson(200, { findings, total: findings.length });
       }
 
-      // 10. GET /api/reports/:id
+      // 10. GET /api/reports/:id/sarif
+      if (pathname.match(/^\/api\/reports\/[^/]+\/sarif$/) && req.method === "GET") {
+        const runId = pathname.split("/")[3];
+        const sarif = testEngine.generateSarifReport(runId);
+        if (!sarif) {
+          return sendJson(404, { error: `SARIF report for run '${runId}' not found.` });
+        }
+        res.setHeader("Content-Disposition", `attachment; filename="fairenrol-scan-${runId}.sarif"`);
+        return sendJson(200, sarif);
+      }
+
+      // 11. GET /api/reports/:id
       if (pathname.startsWith("/api/reports/") && req.method === "GET") {
         const runId = pathname.replace("/api/reports/", "");
         const report = testEngine.generateReport(runId);
@@ -136,6 +147,39 @@ export function createLabManagerServer() {
           return sendJson(404, { error: `Report for run '${runId}' not found.` });
         }
         return sendJson(200, { report });
+      }
+
+      // 12. GET /api/telemetry (fetches telemetry from running custom target if available)
+      if (pathname === "/api/telemetry" && req.method === "GET") {
+        try {
+          const status = await lifecycle.getTargetStatus("custom-api-vault");
+          if (status.status === "running" && status.endpoint) {
+            const resp = await fetch(`${status.endpoint}/api/telemetry`);
+            const data = await resp.json();
+            return sendJson(200, data);
+          }
+        } catch {}
+        return sendJson(200, { telemetry: [], message: "Target offline or no events recorded yet." });
+      }
+
+      // 13. POST /api/simulate-attack (proxies to running custom target)
+      if (pathname === "/api/simulate-attack" && req.method === "POST") {
+        const body = await readBody();
+        try {
+          const status = await lifecycle.getTargetStatus("custom-api-vault");
+          if (status.status === "running" && status.endpoint) {
+            const resp = await fetch(`${status.endpoint}/api/simulate-attack`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+            });
+            const data = await resp.json();
+            return sendJson(resp.status, data);
+          }
+        } catch (err) {
+          return sendJson(500, { error: `Attack simulation failed: ${err.message}` });
+        }
+        return sendJson(400, { error: "Target 'custom-api-vault' is not running." });
       }
 
       sendJson(404, { error: "Endpoint not found" });

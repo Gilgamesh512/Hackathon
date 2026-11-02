@@ -8,6 +8,8 @@ export default function Header({
   onLogin,
   onLogout,
   onOpenSetup,
+  onOpenTour,
+  onExportCertificate,
 }) {
   return (
     <header className="topbar">
@@ -19,6 +21,22 @@ export default function Header({
       </a>
 
       <div className="top-actions">
+        <button
+          className="button outline story-tour-btn"
+          onClick={onOpenTour}
+          title="Start 3-Minute Story Demo Walkthrough"
+        >
+          <span>✨ 3-Min Demo Tour</span>
+        </button>
+
+        <button
+          className="button outline export-cert-btn"
+          onClick={onExportCertificate}
+          title="Export Cryptographically Anchored Audit Certificate (JSON)"
+        >
+          <span>📜 Export Audit Proof</span>
+        </button>
+
         <button
           className="button outline setup-guide-btn"
           onClick={onOpenSetup}

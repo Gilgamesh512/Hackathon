@@ -19,6 +19,9 @@ import AuditLogView from "./components/AuditLogView";
 import ComparisonSection from "./components/ComparisonSection";
 import TideCloakSetupModal from "./components/TideCloakSetupModal";
 import FairnessMonitorView from "./components/FairnessMonitorView";
+import SecurityLabView from "./components/SecurityLabView";
+import GuidedDemoModal from "./components/GuidedDemoModal";
+import { exportAuditCertificate } from "./services/labClient";
 
 const initialPanel = [
   { id: "approver-1", name: "Dr. Amara Okafor", title: "Head of School" },
@@ -603,7 +606,8 @@ export default function App() {
   const [isSetupModalOpen, setIsSetupModalOpen] = useState(false);
   const [activeEvidenceRequest, setActiveEvidenceRequest] = useState(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
-  const [activeTab, setActiveTab] = useState("dashboard"); // 'dashboard' | 'fairness_monitor'
+  const [activeTab, setActiveTab] = useState("dashboard"); // 'dashboard' | 'fairness_monitor' | 'security_lab'
+  const [isTourModalOpen, setIsTourModalOpen] = useState(false);
 
   // Independent Anchor Checkpoint (Head hash of verified clean state)
   const checkpointHash = useMemo(() => {
@@ -844,6 +848,10 @@ export default function App() {
         onLogin={handleLogin}
         onLogout={logout}
         onOpenSetup={() => setIsSetupModalOpen(true)}
+        onOpenTour={() => setIsTourModalOpen(true)}
+        onExportCertificate={() =>
+          exportAuditCertificate(state.audit, checkpointHash, state.courses)
+        }
       />
 
       <section className="hero">
@@ -904,6 +912,12 @@ export default function App() {
           {fairnessAlerts.some((a) => a.severity === "CRITICAL" || a.severity === "WARNING") && (
             <span className="tab-alert-badge">!</span>
           )}
+        </button>
+        <button
+          className={`main-tab-btn ${activeTab === "security_lab" ? "active" : ""}`}
+          onClick={() => setActiveTab("security_lab")}
+        >
+          🛡️ Security Lab & Target Telemetry
         </button>
       </nav>
 
@@ -1080,6 +1094,9 @@ export default function App() {
         />
       )}
 
+      {/* SECURITY LAB & TELEMETRY TAB CONTENT */}
+      {activeTab === "security_lab" && <SecurityLabView />}
+
       {/* Architectural Comparison Section */}
       <ComparisonSection />
 
@@ -1118,6 +1135,20 @@ export default function App() {
         onClose={() => setIsSetupModalOpen(false)}
         onReload={() => location.reload()}
         initError={initError}
+      />
+
+      {/* 3-Minute Story Guided Demo Tour Modal */}
+      <GuidedDemoModal
+        isOpen={isTourModalOpen}
+        onClose={() => setIsTourModalOpen(false)}
+        onSwitchTab={(tab) => setActiveTab(tab)}
+        onSwitchPersona={(p) => setRole(p)}
+        onSimulateWithdrawal={() => handleWithdrawCourse("comp3100", "s01")}
+        onSimulateIllegalOverride={handleAttemptRegistrarOverrides}
+        onNavigateToEvidence={() => {
+          setActiveTab("dashboard");
+          setRole("approver");
+        }}
       />
     </main>
   );
