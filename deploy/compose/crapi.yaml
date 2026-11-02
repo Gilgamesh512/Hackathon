@@ -1,0 +1,27 @@
+version: "3.8"
+
+services:
+  crapi-web:
+    image: crapi/crapi-web:latest
+    container_name: sec-lab-crapi-web
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8888:80"
+    networks:
+      - sec-lab-target-net
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+
+networks:
+  sec-lab-target-net:
+    external: true

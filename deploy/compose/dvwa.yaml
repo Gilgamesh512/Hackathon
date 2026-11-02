@@ -1,0 +1,27 @@
+version: "3.8"
+
+services:
+  dvwa:
+    image: vulnerables/web-dvwa:latest
+    container_name: sec-lab-dvwa
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8082:80"
+    networks:
+      - sec-lab-target-net
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "0.75"
+          memory: 384M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/login.php"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+
+networks:
+  sec-lab-target-net:
+    external: true

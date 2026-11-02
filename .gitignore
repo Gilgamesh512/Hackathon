@@ -1,3 +1,37 @@
+# Dependencies
 node_modules/
+.pnp
+.pnp.js
+
+# Production build
 dist/
+build/
+
+# Local Environment Variables & Secrets
+.env.local
+.env.*.local
+*.pem
+*.key
+*.cert
+
+# TideCloak local adapter & credentials
 public/tidecloak.json
+
+# Logs & Test reports
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Lab Platform Evidence & Scan Artifacts
+data/
+evidence/
+reports/
+
+# Editor & OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

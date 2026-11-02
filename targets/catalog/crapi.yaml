@@ -1,0 +1,42 @@
+id: owasp-crapi
+name: OWASP crAPI (completely ridiculous API)
+version: 1.0.0
+kind: external
+category:
+  - api
+  - microservices
+
+description: >-
+  OWASP crAPI simulates a modern vehicle management service built with microservices architecture,
+  illustrating OWASP API Security Top 10 vulnerabilities (BOLA, broken authentication, mass assignment, etc.).
+
+runtime:
+  type: docker-compose
+  composeFile: deploy/compose/crapi.yaml
+  serviceName: crapi-web
+  defaultPort: 8888
+  internalHost: crapi-web
+  network: sec-lab-target-net
+
+access:
+  exposure: private
+  allowedProfiles:
+    - manual-api
+    - automated-api
+    - burp-suite
+
+lifecycle:
+  healthcheckRequired: true
+  healthcheckEndpoint: /health
+  resetSupported: true
+  resetStrategy: db-seed-reload
+
+testing:
+  authorizedScopeRequired: true
+  destructiveTestsRequireApproval: true
+  expectedFindings:
+    - API1:2023 Broken Object Level Authorization (Vehicle location leak)
+    - API2:2023 Broken Authentication (OTP brute force / reset password)
+    - API3:2023 Broken Object Property Level Authorization (Mass assignment in profile)
+    - API5:2023 Broken Function Level Authorization (Admin endpoint access)
+    - API6:2023 Unrestricted Access to Sensitive Business Flows

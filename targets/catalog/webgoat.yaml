@@ -1,0 +1,40 @@
+id: owasp-webgoat
+name: OWASP WebGoat
+version: 2023.4
+kind: external
+category:
+  - web
+  - lessons
+
+description: >-
+  WebGoat is a deliberately insecure web application maintained by OWASP designed to teach web
+  application security lessons.
+
+runtime:
+  type: docker-compose
+  composeFile: deploy/compose/webgoat.yaml
+  serviceName: webgoat
+  defaultPort: 8080
+  internalHost: webgoat
+  network: sec-lab-target-net
+
+access:
+  exposure: private
+  allowedProfiles:
+    - manual-web
+    - guided-learning
+
+lifecycle:
+  healthcheckRequired: true
+  healthcheckEndpoint: /WebGoat/login
+  resetSupported: true
+  resetStrategy: lesson-reset
+
+testing:
+  authorizedScopeRequired: true
+  destructiveTestsRequireApproval: false
+  expectedFindings:
+    - Path Traversal
+    - XXE Injection
+    - JWT Tampering
+    - Password Reset Flaws

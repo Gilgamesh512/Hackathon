@@ -84,6 +84,9 @@ export function extractUserProfile(getValueFromToken) {
 
 /**
  * Secret passcode used for demo cryptographic derivation for the approver panel.
- * In a full production deployment with Tide Tag-based E2EE, this is derived from the Approver's decentralized key.
+ * In production / non-demo deployments, this must be injected via secure KMS/vault or Tide Tag-based E2EE.
+ * WARNING: Never use default demo keys in live environments.
  */
-export const APPROVER_SECRET_KEY = "TIDECLOAK_PANEL_SECRET_KEY_2026";
+export const APPROVER_SECRET_KEY =
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_APPROVER_SECRET_KEY) ||
+  "TIDECLOAK_PANEL_SECRET_KEY_2026";

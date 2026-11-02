@@ -1,0 +1,42 @@
+id: dvwa
+name: Damn Vulnerable Web Application (DVWA)
+version: 1.10
+kind: external
+category:
+  - web
+  - traditional
+
+description: >-
+  Damn Vulnerable Web Application (DVWA) is a PHP/MySQL web application that is damn vulnerable.
+  Its main goals are to be an aid for security professionals to test their skills and tools in a legal environment.
+
+runtime:
+  type: docker-compose
+  composeFile: deploy/compose/dvwa.yaml
+  serviceName: dvwa
+  defaultPort: 80
+  internalHost: dvwa
+  network: sec-lab-target-net
+
+access:
+  exposure: private
+  allowedProfiles:
+    - manual-web
+    - burp-suite
+    - zap-baseline
+
+lifecycle:
+  healthcheckRequired: true
+  healthcheckEndpoint: /login.php
+  resetSupported: true
+  resetStrategy: db-reset-script
+
+testing:
+  authorizedScopeRequired: true
+  destructiveTestsRequireApproval: true
+  expectedFindings:
+    - Command Injection
+    - Cross Site Request Forgery (CSRF)
+    - File Inclusion (LFI/RFI)
+    - SQL Injection (Classic / Blind)
+    - Insecure File Upload
