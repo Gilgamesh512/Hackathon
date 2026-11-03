@@ -10,6 +10,8 @@ export default function Header({
   onOpenSetup,
   onOpenTour,
   onExportCertificate,
+  onOpenVerifier,
+  onOpenStress,
 }) {
   return (
     <header className="topbar">
@@ -34,7 +36,23 @@ export default function Header({
           onClick={onExportCertificate}
           title="Export Cryptographically Anchored Audit Certificate (JSON)"
         >
-          <span>📜 Export Audit Proof</span>
+          <span>📜 Export Proof</span>
+        </button>
+
+        <button
+          className="button outline verify-proof-btn"
+          onClick={onOpenVerifier}
+          title="Upload & Verify Independent JSON Audit Certificate (Zero-Trust)"
+        >
+          <span>🔍 Verify Proof</span>
+        </button>
+
+        <button
+          className="button outline stress-btn"
+          onClick={onOpenStress}
+          title="Run Massive Concurrent Race Condition Stress Benchmark (CWE-362)"
+        >
+          <span>⚡ Stress Lab</span>
         </button>
 
         <button
@@ -42,7 +60,7 @@ export default function Header({
           onClick={onOpenSetup}
           title="TideCloak Setup Guide"
         >
-          <span className="icon-gear">⚙</span> TideCloak Setup
+          <span className="icon-gear">⚙</span> TideCloak
         </button>
 
         <span
@@ -69,7 +87,7 @@ export default function Header({
                 )}
               </>
             ) : (
-              "TideCloak · Not signed in"
+              "TideCloak · Offline"
             )}
           </span>
         </span>
@@ -84,7 +102,7 @@ export default function Header({
             onClick={onLogin}
             disabled={isLoggingIn}
           >
-            {isLoggingIn ? "Starting login…" : "Log in with TideCloak"}
+            {isLoggingIn ? "Logging in…" : "Log in with TideCloak"}
           </button>
         )}
       </div>

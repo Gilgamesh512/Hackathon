@@ -21,6 +21,8 @@ import TideCloakSetupModal from "./components/TideCloakSetupModal";
 import FairnessMonitorView from "./components/FairnessMonitorView";
 import SecurityLabView from "./components/SecurityLabView";
 import GuidedDemoModal from "./components/GuidedDemoModal";
+import AuditProofVerifierModal from "./components/AuditProofVerifierModal";
+import RaceConditionStressModal from "./components/RaceConditionStressModal";
 import { exportAuditCertificate } from "./services/labClient";
 
 const initialPanel = [
@@ -608,6 +610,8 @@ export default function App() {
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [activeTab, setActiveTab] = useState("dashboard"); // 'dashboard' | 'fairness_monitor' | 'security_lab'
   const [isTourModalOpen, setIsTourModalOpen] = useState(false);
+  const [isVerifierModalOpen, setIsVerifierModalOpen] = useState(false);
+  const [isStressModalOpen, setIsStressModalOpen] = useState(false);
 
   // Independent Anchor Checkpoint (Head hash of verified clean state)
   const checkpointHash = useMemo(() => {
@@ -649,6 +653,28 @@ export default function App() {
       isMounted = false;
     };
   }, [state.pendingAuditQueue, state.audit]);
+
+  // Listen for Cross-Tab synchronization messages
+  useEffect(() => {
+    const unsubscribe = subscribeCrossTab((msg) => {
+      if (msg.type === "STATE_SYNC" && msg.payload) {
+        dispatch({ type: "sync_state", state: msg.payload });
+      }
+    });
+    return unsubscribe;
+  }, []);
+
+  // Broadcast state changes across tabs
+  useEffect(() => {
+    if (state.courses.length > 0) {
+      broadcastCrossTab("STATE_SYNC", {
+        courses: state.courses,
+        requests: state.requests,
+        audit: state.audit,
+        isTampered: state.isTampered,
+      });
+    }
+  }, [state.courses, state.requests, state.audit, state.isTampered]);
 
   // Auto-align persona view if user logs in with Keycloak realm roles
   useEffect(() => {

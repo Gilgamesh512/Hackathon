@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { broadcastCrossTab } from "../services/crossTabSync";
 
 export default function CourseGrid({
   courses,
@@ -7,11 +8,14 @@ export default function CourseGrid({
   onJoinCourse,
   onWithdrawCourse,
   onSimulateConcurrentEnrol,
+  onOpenStressModal,
   approvedRequests,
   actionNames,
   auditHistory = [],
 }) {
   const [isSimulatingRace, setIsSimulatingRace] = useState(false);
+  const [showVisualMap, setShowVisualMap] = useState(true);
+  const [honeypotAlert, setHoneypotAlert] = useState("");
 
   const ownWaitlists = courses
     .map((course) => ({
@@ -28,6 +32,26 @@ export default function CourseGrid({
     setIsSimulatingRace(true);
     await onSimulateConcurrentEnrol(course.id, studentId);
     setIsSimulatingRace(false);
+  }
+
+  function handleTriggerHoneypotProbe(course) {
+    const alertMsg = `🚨 Honeypot Sensor Tripped: Unauthorized Queue Jump Attempt on ${course.code} (CWE-284 / BOLA) Blocked & Forensically Anchored!`;
+    setHoneypotAlert(alertMsg);
+    setTimeout(() => setHoneypotAlert(""), 6000);
+
+    // Broadcast live telemetry to Security Lab
+    broadcastCrossTab("EXPLOIT_TELEMETRY", {
+      attackType: "QUEUE_JUMP_BOLA_PROBE",
+      cwe: "CWE-284",
+      owasp: "API1:2023",
+      severity: "HIGH",
+      actor: studentId,
+      endpoint: `/api/courses/${course.id}/force-occupy`,
+      method: "POST",
+      payloadSummary: `Direct seat theft attempt on ${course.code} bypassing FIFO waitlist`,
+      indicator: "BLOCKED: Object-level authorization and strict FIFO sequence controller rejected bypass.",
+      evidenceChecksum: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    });
   }
 
   // Filter audit history for current student
@@ -47,10 +71,31 @@ export default function CourseGrid({
           <h2>Course Registration & FIFO Waitlists</h2>
         </div>
         <div className="status-badges-group">
+          <button
+            className="button mini outline"
+            onClick={() => setShowVisualMap(!showVisualMap)}
+            title="Toggle Visual Seat Map & Live Queue Pipeline"
+          >
+            {showVisualMap ? "Hide Seat Pipeline" : "👁️ Show Seat Pipeline"}
+          </button>
+          <button
+            className="button mini outline stress-lab-btn"
+            onClick={() => onOpenStressModal?.(courses[0])}
+            title="Open Concurrency & Race Condition Stress Benchmark"
+          >
+            ⚡ Race Stress Lab
+          </button>
           <span className="count-pill badge-enrolled">{ownEnrolments.length} Enrolled</span>
           <span className="count-pill badge-waiting">{ownWaitlists.length} Waitlisted</span>
         </div>
       </div>
+
+      {honeypotAlert && (
+        <div className="notice honeypot-notice" role="alert">
+          <span>{honeypotAlert}</span>
+          <button onClick={() => setHoneypotAlert("")}>×</button>
+        </div>
+      )}
 
       {/* Active Position Banner */}
       {ownWaitlists.length > 0 && (
@@ -111,6 +156,51 @@ export default function CourseGrid({
                 />
               </div>
 
+              {/* Interactive Visual Seat & Queue Flow Pipeline */}
+              {showVisualMap && (
+                <div className="visual-pipeline-box">
+                  <span className="pipeline-label">LIVE SEAT & QUEUE PIPELINE:</span>
+                  <div className="seat-grid">
+                    {Array.from({ length: course.capacity }, (_, idx) => {
+                      const occupantId = course.enrolled[idx];
+                      const isOccupied = Boolean(occupantId);
+                      const isCurrentStudentSeat = occupantId === studentId;
+
+                      return (
+                        <div
+                          key={idx}
+                          className={`seat-slot ${isOccupied ? "occupied" : "vacant"} ${
+                            isCurrentStudentSeat ? "self-seat" : ""
+                          }`}
+                          title={isOccupied ? `Seat #${idx + 1}: ${occupantId}` : `Seat #${idx + 1}: Vacant`}
+                        >
+                          <span className="seat-icon">{isOccupied ? "🧑‍💻" : "🪑"}</span>
+                          <span className="seat-tag">
+                            {isOccupied ? (isCurrentStudentSeat ? "You" : occupantId) : `Open #${idx + 1}`}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {course.waitlist.length > 0 && (
+                    <div className="queue-pipeline-row">
+                      <span className="queue-line-tag">FIFO Queue:</span>
+                      <div className="queue-pills-scroll">
+                        {course.waitlist.map((wId, qIdx) => (
+                          <span
+                            key={wId}
+                            className={`queue-candidate-pill ${wId === studentId ? "self-wait" : ""}`}
+                          >
+                            #{qIdx + 1} {wId === studentId ? "You" : wId}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Action buttons and queue status */}
               <div className="course-action-zone">
                 {isEnrolled ? (
@@ -160,6 +250,15 @@ export default function CourseGrid({
                     )}
                   </div>
                 )}
+
+                {/* Honeypot / Telemetry Probe Button */}
+                <button
+                  className="button mini text-muted honeypot-btn"
+                  onClick={() => handleTriggerHoneypotProbe(course)}
+                  title="Simulate attacker sending direct API request to jump the queue (CWE-284)"
+                >
+                  ⚠️ Simulate Queue Bypass Probe (Test Honeypot)
+                </button>
               </div>
             </article>
           );

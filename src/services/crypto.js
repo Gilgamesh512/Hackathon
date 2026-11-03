@@ -289,3 +289,86 @@ export async function decryptConfidentialEvidence(
     };
   }
 }
+
+/**
+ * Signs an approver's quorum vote using HMAC-SHA-256.
+ * Mathematically binds approverId, requestId, decision, and timestamp together.
+ */
+export async function signApproverVote(approverId, requestId, decision, timestamp, secretKey) {
+  const payload = canonicalJsonStringify({
+    approverId,
+    requestId,
+    decision,
+    timestamp,
+  });
+  const keySecret = secretKey || "TIDECLOAK_PANEL_SECRET_KEY_2026";
+  const enc = textEncoder.encode(keySecret);
+  const key = await subtleCrypto.importKey(
+    "raw",
+    enc,
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const signatureBuffer = await subtleCrypto.sign(
+    "HMAC",
+    key,
+    textEncoder.encode(payload)
+  );
+  return {
+    signature: bufferToHex(signatureBuffer),
+    algorithm: "HMAC-SHA-256",
+    payloadHash: await sha256(payload),
+    signedAt: timestamp,
+  };
+}
+
+/**
+ * Verifies an approver's vote signature against the canonical payload.
+ * Rejects forged signatures and altered voting decisions (CWE-347).
+ */
+export async function verifyApproverVoteSignature(voteEntry, secretKey) {
+  if (!voteEntry || !voteEntry.signatureProof || !voteEntry.signatureProof.signature) {
+    return { valid: false, error: "Missing cryptographic signature proof" };
+  }
+  try {
+    const payload = canonicalJsonStringify({
+      approverId: voteEntry.id,
+      requestId: voteEntry.requestId,
+      decision: voteEntry.decision,
+      timestamp: voteEntry.votedAt,
+    });
+    const keySecret = secretKey || "TIDECLOAK_PANEL_SECRET_KEY_2026";
+    const enc = textEncoder.encode(keySecret);
+    const key = await subtleCrypto.importKey(
+      "raw",
+      enc,
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["verify"]
+    );
+    const sigMatches = voteEntry.signatureProof.signature.match(/.{1,2}/g);
+    if (!sigMatches) {
+      return { valid: false, error: "Malformed signature format" };
+    }
+    const sigBytes = new Uint8Array(sigMatches.map((b) => parseInt(b, 16)));
+    const valid = await subtleCrypto.verify(
+      "HMAC",
+      key,
+      sigBytes,
+      textEncoder.encode(payload)
+    );
+    return {
+      valid,
+      approverId: voteEntry.id,
+      requestId: voteEntry.requestId,
+      error: valid ? null : "Cryptographic signature verification failed: Forged or altered vote detected (CWE-347)",
+    };
+  } catch (err) {
+    return {
+      valid: false,
+      error: `Signature verification exception: ${err.message}`,
+    };
+  }
+}
+

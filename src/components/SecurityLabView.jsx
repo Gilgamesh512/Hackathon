@@ -6,6 +6,7 @@ import {
   buildSarifDocument,
   downloadJsonFile,
 } from "../services/labClient";
+import { subscribeCrossTab } from "../services/crossTabSync";
 
 export default function SecurityLabView() {
   const [targets, setTargets] = useState([]);
@@ -39,6 +40,20 @@ export default function SecurityLabView() {
 
   useEffect(() => {
     loadTargets();
+
+    // Subscribe to cross-tab live exploit telemetry events
+    const unsubscribe = subscribeCrossTab((msg) => {
+      if (msg.type === "EXPLOIT_TELEMETRY" && msg.payload) {
+        const item = {
+          id: `tel_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+          timestamp: msg.timestamp || new Date().toISOString(),
+          ...msg.payload,
+        };
+        setTelemetryFeed((prev) => [item, ...prev]);
+      }
+    });
+
+    return unsubscribe;
   }, []);
 
   async function loadTargets() {

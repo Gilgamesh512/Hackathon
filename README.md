@@ -18,6 +18,8 @@ Every semester, millions of university students compete for high-demand elective
 - **Zero-Compromise Privacy (AES-GCM-256 with AAD):** Sensitive supporting documents (medical certificates, accessibility accommodation records) are encrypted using W3C Web Crypto AES-GCM-256 with Authenticated Additional Data (AAD) binding ciphertext to the exact student and course context.
 - **Explainable Fairness Monitor:** A real-time, rule-based auditing engine that monitors queue health, detects timing anomalies (e.g. capacity expansions right before force-enrolment), tracks repeated single-actor requests, and evaluates ledger integrity.
 - **Anchored Hash Chain:** SHA-256 hash chaining with an independent Checkpoint Anchor, providing provable tamper-evidence against rogue database administrators who attempt full-history recalculations.
+- **Dual-Purpose Honeypot Target & Real-time Exploit Telemetry:** While functioning as an authentic course enrolment platform, FairEnrol is simultaneously an instrumented security research target. Every attempted queue manipulation, forged approver signature (CWE-347), hash rewrite (CWE-354), or race condition probe (CWE-362) trips embedded tripwires that stream forensically anchored telemetry to the Security Lab and export standardized OASIS SARIF v2.1.0 reports.
+- **Cross-Tab Real-time Synchronizer (HTML5 BroadcastChannel):** Multi-window real-time synchronization allows judges to run split-screen persona demonstrations (e.g., Student Avery in Window 1, Student Riley in Window 2) with instant zero-latency reactivity.
 
 ---
 
@@ -169,9 +171,9 @@ Copy-Item .env.example .env.local
 
 ### 3. Run Automated Invariant & Cryptographic Test Suite
 ```powershell
-npm.cmd test
+npm.cmd run test:all
 ```
-*Executes all 16 automated tests across both suites (`test-crypto.js` and `test-fairenrol.js`), verifying FIFO invariants, 2-of-3 quorum, concurrency locks, tamper detection, Checkpoint Anchoring, AES-GCM + AAD, and anomaly detection.*
+*Executes all 28 automated tests across three suites (`test-crypto.js`, `test-fairenrol.js`, and `test/lab/test-lab-manager.js`), verifying FIFO invariants, 2-of-3 quorum, massive concurrency locks (30 contenders), HMAC-SHA-256 signature verification, tamper detection, Checkpoint Anchoring, AES-GCM + AAD, honeypot telemetry sensors, and SARIF v2.1.0 standards.*
 
 ### 4. Launch Application in Development Mode
 ```powershell

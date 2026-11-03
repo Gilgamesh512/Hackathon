@@ -1,4 +1,6 @@
-import React from "react";
+import React, { useState } from "react";
+import { verifyApproverVoteSignature } from "../services/crypto";
+import { APPROVER_SECRET_KEY } from "../services/tidecloak";
 
 export default function ApproverDashboard({
   panel,
@@ -9,9 +11,13 @@ export default function ApproverDashboard({
   actionNames,
   onVote,
   onRejectVote,
+  onSimulateForgeryVote,
   onInspectEvidence,
   RequestFormComponent,
 }) {
+  const [selectedSignatureProof, setSelectedSignatureProof] = useState(null);
+  const [sigVerifyResult, setSigVerifyResult] = useState(null);
+
   function getPersonName(id) {
     return students.find((s) => s.id === id)?.name ?? id;
   }
@@ -22,6 +28,12 @@ export default function ApproverDashboard({
 
   const pendingRequests = requests.filter((r) => r.status === "pending");
   const finalizedRequests = requests.filter((r) => r.status !== "pending");
+
+  async function handleInspectSignature(voteEntry) {
+    setSelectedSignatureProof(voteEntry);
+    const result = await verifyApproverVoteSignature(voteEntry, APPROVER_SECRET_KEY);
+    setSigVerifyResult(result);
+  }
 
   return (
     <section className="section">
@@ -38,7 +50,7 @@ export default function ApproverDashboard({
       <p className="section-desc">
         Special consideration exceptions require at least 2 independent concurring approvals. No
         single registrar, faculty dean, or student representative can grant an exception unilaterally.
-        All votes and timestamps are recorded in the SHA-256 hash-chained audit ledger.
+        All votes are cryptographically signed with HMAC-SHA-256 and recorded in the SHA-256 audit ledger.
       </p>
 
       {/* Panel Members Strip */}
@@ -147,22 +159,34 @@ export default function ApproverDashboard({
                 </div>
                 <div className="vote-avatars">
                   {approvals.map((member) => (
-                    <span
-                      className="avatar mini approve-avatar"
-                      title={`Approved by ${member.name} (${member.title})`}
+                    <div
                       key={member.id}
+                      className="vote-badge-item"
+                      onClick={() => handleInspectSignature(member)}
+                      title="Click to verify cryptographic signature"
                     >
-                      ✓ {member.name.split(" ").map((p) => p[0]).slice(-2).join("")}
-                    </span>
+                      <span className="avatar mini approve-avatar">
+                        ✓ {member.name.split(" ").map((p) => p[0]).slice(-2).join("")}
+                      </span>
+                      <span className="sig-click-label">
+                        {member.signatureProof ? "🔏 Signed" : "Voted"}
+                      </span>
+                    </div>
                   ))}
                   {rejections.map((member) => (
-                    <span
-                      className="avatar mini reject-avatar"
-                      title={`Rejected by ${member.name} (${member.title})`}
+                    <div
                       key={member.id}
+                      className="vote-badge-item"
+                      onClick={() => handleInspectSignature(member)}
+                      title="Click to verify cryptographic signature"
                     >
-                      ✗ {member.name.split(" ").map((p) => p[0]).slice(-2).join("")}
-                    </span>
+                      <span className="avatar mini reject-avatar">
+                        ✗ {member.name.split(" ").map((p) => p[0]).slice(-2).join("")}
+                      </span>
+                      <span className="sig-click-label">
+                        {member.signatureProof ? "🔏 Signed" : "Voted"}
+                      </span>
+                    </div>
                   ))}
                 </div>
               </div>
@@ -175,7 +199,7 @@ export default function ApproverDashboard({
                   </span>
                 ) : hasVoted ? (
                   <span className="voted-indicator">
-                    ✓ You have recorded your vote ({hasVotedApprove ? "Approval" : "Rejection"}) as {activeApprover?.name}.
+                    ✓ You have recorded your cryptographically signed vote ({hasVotedApprove ? "Approval" : "Rejection"}) as {activeApprover?.name}.
                   </span>
                 ) : (
                   <div className="vote-action-buttons">
@@ -183,13 +207,20 @@ export default function ApproverDashboard({
                       className="button approve"
                       onClick={() => onVote(request.id, activeApprover)}
                     >
-                      ✓ Approve as {activeApprover?.name}
+                      ✓ Sign & Approve as {activeApprover?.name}
                     </button>
                     <button
                       className="button outline danger-mini"
                       onClick={() => onRejectVote(request.id, activeApprover)}
                     >
                       ✗ Cast Rejection Vote
+                    </button>
+                    <button
+                      className="button mini outline danger-mini"
+                      onClick={() => onSimulateForgeryVote?.(request.id, activeApprover)}
+                      title="Simulate attacker presenting a fake signature (CWE-347)"
+                    >
+                      🧪 Forge Fake Signature (Test CWE-347)
                     </button>
                   </div>
                 )}
@@ -230,6 +261,71 @@ export default function ApproverDashboard({
             ))}
           </div>
         </>
+      )}
+
+      {/* Signature Inspector Modal */}
+      {selectedSignatureProof && (
+        <div className="modal-backdrop" onClick={() => setSelectedSignatureProof(null)}>
+          <div className="modal-sheet" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "560px" }}>
+            <div className="tour-modal-header">
+              <div>
+                <div className="tour-step-badge">CRYPTOGRAPHIC SIGNATURE AUDIT</div>
+                <h2>Approver Vote Signature Proof</h2>
+              </div>
+              <button
+                className="button-close"
+                onClick={() => setSelectedSignatureProof(null)}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ marginTop: "16px" }}>
+              <div className="sig-meta-row">
+                <span>Voter:</span>
+                <strong>{selectedSignatureProof.name} ({selectedSignatureProof.title})</strong>
+              </div>
+              <div className="sig-meta-row">
+                <span>Timestamp:</span>
+                <code>{selectedSignatureProof.votedAt}</code>
+              </div>
+              <div className="sig-meta-row">
+                <span>Algorithm:</span>
+                <code>{selectedSignatureProof.signatureProof?.algorithm || "HMAC-SHA-256"}</code>
+              </div>
+              <div className="sig-meta-row" style={{ flexDirection: "column", alignItems: "flex-start", gap: "4px" }}>
+                <span>Cryptographic Signature:</span>
+                <code className="sig-code-block">
+                  {selectedSignatureProof.signatureProof?.signature || "Legacy unsigned entry"}
+                </code>
+              </div>
+            </div>
+
+            {sigVerifyResult && (
+              <div
+                className={`verification-status-banner ${
+                  sigVerifyResult.valid ? "status-valid" : "status-tampered"
+                }`}
+                style={{ marginTop: "16px" }}
+              >
+                <strong>
+                  {sigVerifyResult.valid
+                    ? "✓ Signature Valid — Mathematical Authenticity Confirmed"
+                    : `❌ Invalid Signature: ${sigVerifyResult.error}`}
+                </strong>
+              </div>
+            )}
+
+            <div className="modal-actions" style={{ marginTop: "20px" }}>
+              <button
+                className="button primary"
+                onClick={() => setSelectedSignatureProof(null)}
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </section>
   );

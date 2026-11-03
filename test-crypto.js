@@ -6,6 +6,8 @@ import {
   verifyAuditChain,
   encryptConfidentialEvidence,
   decryptConfidentialEvidence,
+  signApproverVote,
+  verifyApproverVoteSignature,
 } from "./src/services/crypto.js";
 
 async function runTests() {
@@ -70,7 +72,37 @@ async function runTests() {
   assert.equal(decFail.success, false, "Unauthorized decryption must fail");
   console.log("✓ Unauthorized decryption was blocked by Web Crypto API:", decFail.error);
 
-  console.log("\nALL CRYPTOGRAPHIC TESTS PASSED (5/5)!");
+  // 5. Cryptographic Approver Vote Signing (HMAC-SHA-256)
+  const approverId = "approver-1";
+  const requestId = "req-test-99";
+  const timestamp = "2026-11-03T10:00:00.000Z";
+  const sigProof = await signApproverVote(approverId, requestId, "approve", timestamp, key);
+  assert.ok(sigProof.signature && sigProof.signature.length === 64, "Signature must be 64-char hex HMAC");
+  assert.equal(sigProof.algorithm, "HMAC-SHA-256");
+  console.log("✓ Approver Vote signature generated successfully:", sigProof.signature.slice(0, 16) + "…");
+
+  // 6. Signature Verification & Authenticity Check
+  const voteEntry = {
+    id: approverId,
+    requestId,
+    decision: "approve",
+    votedAt: timestamp,
+    signatureProof: sigProof,
+  };
+  const verifyResult = await verifyApproverVoteSignature(voteEntry, key);
+  assert.equal(verifyResult.valid, true, "Valid signature must verify successfully");
+  console.log("✓ Approver signature mathematical verification succeeded for", approverId);
+
+  // 7. Forged Signature Detection (CWE-347)
+  const forgedVoteEntry = {
+    ...voteEntry,
+    decision: "reject", // Malicious voter attempted to flip vote without resigning
+  };
+  const verifyForgedResult = await verifyApproverVoteSignature(forgedVoteEntry, key);
+  assert.equal(verifyForgedResult.valid, false, "Tampered vote decision must fail verification");
+  console.log("✓ Forged vote decision detected & blocked successfully (CWE-347):", verifyForgedResult.error);
+
+  console.log("\nALL CRYPTOGRAPHIC TESTS PASSED (7/7)!");
 }
 
 runTests().catch((err) => {
