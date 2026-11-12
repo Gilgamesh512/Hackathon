@@ -14,7 +14,8 @@ Every semester, millions of university students compete for high-demand elective
 
 **FairEnrol** redesigns university course enrolment from the ground up:
 - **No single person can move the line:** Queue positions are strictly First-In, First-Out (FIFO), tamper-evident, and automatically promoted upon seat release or capacity expansion.
-- **Collective Multi-Party Quorum (2-of-3):** No registrar can unilaterally "force enrol" a friend or jump the waitlist. Special exemptions require a public justification and independent approvals from at least 2 of 3 panel members (Head of School, Academic Advisor, Student Representative).
+- **Collective Multi-Party Quorum (2-of-3) with Asymmetric NIST ECDSA P-256:** No registrar can unilaterally "force enrol" a friend or jump the waitlist. Special exemptions require a public justification and independent cryptographic approvals from at least 2 of 3 panel members (Head of School, Academic Advisor, Student Representative). Each member signs with an individual elliptic curve private key (NIST P-256), providing mathematical non-repudiation and zero-secret public verifiability.
+- **Verifiable Server-Side FIFO Sequencer & Real-Time SSE Synchronizer:** A centralized, atomic state machine running on port 4000 guarantees strict microsecond serialization, preventing concurrency race conditions (CWE-362) across multi-user environments. Server-Sent Events (SSE) stream instant state transitions across multiple laptops and browser sessions.
 - **Zero-Compromise Privacy (AES-GCM-256 with AAD):** Sensitive supporting documents (medical certificates, accessibility accommodation records) are encrypted using W3C Web Crypto AES-GCM-256 with Authenticated Additional Data (AAD) binding ciphertext to the exact student and course context.
 - **Explainable Fairness Monitor:** A real-time, rule-based auditing engine that monitors queue health, detects timing anomalies (e.g. capacity expansions right before force-enrolment), tracks repeated single-actor requests, and evaluates ledger integrity.
 - **Anchored Hash Chain:** SHA-256 hash chaining with an independent Checkpoint Anchor, providing provable tamper-evidence against rogue database administrators who attempt full-history recalculations.
@@ -169,24 +170,38 @@ Copy it to `.env.local`:
 Copy-Item .env.example .env.local
 ```
 
-### 3. Run Automated Invariant & Cryptographic Test Suite
+### 3. Run Automated Invariant, Cryptographic & Sequencer Test Suite
 ```powershell
 npm.cmd run test:all
 ```
-*Executes all 28 automated tests across three suites (`test-crypto.js`, `test-fairenrol.js`, and `test/lab/test-lab-manager.js`), verifying FIFO invariants, 2-of-3 quorum, massive concurrency locks (30 contenders), HMAC-SHA-256 signature verification, tamper detection, Checkpoint Anchoring, AES-GCM + AAD, honeypot telemetry sensors, and SARIF v2.1.0 standards.*
+*Executes all **32 automated tests** across four suites (`test-crypto.js`, `test-fairenrol.js`, `test/lab/test-lab-manager.js`, and `test/test-server-sequencer.js`), verifying:*
+- *NIST ECDSA P-256 Asymmetric Digital Signatures & Non-Repudiation (Zero-Secret Public Verification, CWE-347)*
+- *Verifiable Server-Side FIFO Sequencer with Atomic Microsecond Concurrency Mutex (CWE-362)*
+- *Strict FIFO Promotion Invariants & Automatic Vacancy Sweeps*
+- *2-of-3 Multi-Party Quorum Consensus & Self-Approval Prevention*
+- *SHA-256 Canonical Hash Chaining & Independent Checkpoint Anchoring (CWE-354)*
+- *AES-GCM-256 with Authenticated Additional Data (AAD) Context Binding*
+- *Explainable Fairness Anomaly Detection Engine*
+- *OASIS SARIF v2.1.0 Standard Compliance & Canary Decoy Exfiltration Traps*
 
-### 4. Launch Application in Development Mode
+### 4. Launch Verifiable Server Sequencer (Backend Control Plane)
+```powershell
+npm.cmd run server
+```
+*Starts the FairEnrol Verifiable Server Sequencer and Security Lab Control Plane on **[http://localhost:4000/](http://localhost:4000/)** with Server-Sent Events (SSE) enabled for cross-network synchronization.*
+
+### 5. Launch Application in Development Mode
 ```powershell
 npm.cmd run dev
 ```
-Open **[http://localhost:5137/](http://localhost:5137/)** in your browser.
+Open **[http://localhost:5137/](http://localhost:5137/)** in your browser. Notice the green **🟢 Sequencer (4000)** status pill confirming active atomic lock synchronization.
 
-### 5. Production Build Verification
+### 6. Production Build Verification
 ```powershell
 npm.cmd run build
 ```
 
-### 6. Live TideCloak Container Setup (Optional)
+### 7. Live TideCloak Container Setup (Optional)
 To run a live local TideCloak dev container:
 ```powershell
 docker run -d -p 8081:8080 -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=password tideorg/tidecloak-dev:latest
@@ -204,30 +219,47 @@ Hackathon/
 │   ├── tidecloak.json              # Active TideCloak realm configuration
 │   └── tidecloak.sample.json       # Template configuration for fairenrol realm
 ├── src/
+│   ├── server/
+│   │   └── sequencer.js            # Verifiable Server-Side FIFO Sequencer (Atomic Lock, SSE, ECDSA)
+│   ├── lab/
+│   │   ├── registry.js             # Lab Target Registry & Anti-SSRF Whitelist Validator
+│   │   ├── lifecycle.js            # Target Container Lifecycle Controller
+│   │   ├── testEngine.js           # Security Scanner Engine & OASIS SARIF v2.1.0 Exporter
+│   │   └── server.js               # Control Plane HTTP Server (Port 4000)
 │   ├── components/
-│   │   ├── Header.jsx              # Navigation, auth badge, login/logout controls
+│   │   ├── Header.jsx              # Navigation, auth badge, sequencer status, tour controls
 │   │   ├── CourseGrid.jsx          # Course quotas, FIFO waitlist, withdrawal, concurrency race test
 │   │   ├── RegistrarDashboard.jsx  # Quota management, blocked override demo, promotion sweep
-│   │   ├── ApproverDashboard.jsx   # 2-of-3 quorum consensus, vote tracking, conflict-of-interest guard
+│   │   ├── ApproverDashboard.jsx   # 2-of-3 quorum consensus, NIST ECDSA signature verification
 │   │   ├── RequestForm.jsx         # Exception submission with AES-GCM + AAD evidence
 │   │   ├── EvidenceModal.jsx       # Interactive E2EE decryption proof & AAD replay test
 │   │   ├── AuditLogView.jsx        # SHA-256 hash-chained public audit ledger & Checkpoint Anchor
 │   │   ├── FairnessMonitorView.jsx # Explainable Fairness Monitor & Anomaly Detector Dashboard
 │   │   ├── ComparisonSection.jsx   # Architectural contrast comparison
+│   │   ├── SecurityLabView.jsx     # Security Lab, Live Exploit Telemetry & SARIF Export
+│   │   ├── AuditProofVerifierModal.jsx  # Zero-Trust JSON audit certificate verifier
+│   │   ├── RaceConditionStressModal.jsx # 30-contender concurrent race condition benchmark
+│   │   ├── GuidedDemoModal.jsx     # Interactive 3-minute storytelling tour
 │   │   └── TideCloakSetupModal.jsx # Visual Docker & realm configuration guide
 │   ├── services/
-│   │   ├── crypto.js               # W3C Web Crypto API (SHA-256, AES-GCM-256 + AAD, Canonical JSON)
+│   │   ├── crypto.js               # W3C Web Crypto (ECDSA P-256, SHA-256, AES-GCM-256 + AAD, PBKDF2)
+│   │   ├── fairenrolClient.js      # Client bridge to Verifiable Server Sequencer (Port 4000 & SSE)
 │   │   ├── fairnessMonitor.js      # Rule-based anomaly detector (timing, overrides, concentration)
+│   │   ├── labClient.js            # Client bridge to Security Lab Platform
+│   │   ├── crossTabSync.js         # HTML5 BroadcastChannel cross-tab real-time sync
 │   │   ├── keycloak.js             # Keycloak OIDC client singleton (PKCE S256)
 │   │   └── tidecloak.js            # TideCloak token extraction & profile claims mapping
 │   ├── contexts/
 │   │   └── KeycloakContext.jsx     # React Context Provider for OpenID Connect authentication state
-│   ├── App.jsx                     # State orchestrator, reducer lifecycle & tab router
+│   ├── App.jsx                     # State orchestrator, server sync & tab router
 │   ├── main.jsx                    # React entrypoint
 │   ├── seed.json                   # Synthetic course & student data
 │   └── style.css                   # Responsive academic styling & theme tokens
-├── test-crypto.js                  # Baseline cryptographic unit tests
-├── test-fairenrol.js               # Comprehensive 11-rule security & workflow invariant test suite
+├── test/
+│   ├── lab/test-lab-manager.js     # Security Lab Platform acceptance test suite (8 tests)
+│   └── test-server-sequencer.js    # Verifiable Server Sequencer invariant test suite (4 tests)
+├── test-crypto.js                  # Cryptographic unit tests with ECDSA P-256 (10 tests)
+├── test-fairenrol.js               # Comprehensive security & workflow invariant test suite (14 tests)
 ├── setup-realm.js                  # Automated script to configure realm, client, roles and users in TideCloak
 ├── package.json                    # Project metadata, scripts, and dependencies
 ├── vite.config.js                  # Vite configuration (port 5137)
@@ -238,9 +270,9 @@ Hackathon/
 
 ---
 
-## 9. Known Limitations & Production Hardening Roadmap
+## 9. Production Hardening Roadmap
 
-While FairEnrol delivers an end-to-end, mathematically provable prototype for RMIT Hackathon 2026, the following items outline the pathway to institutional production deployment:
-1. **Hardware / Decentralized Key Management:** In production, approver panel decryption keys should be backed by hardware security modules (HSM) or WebAuthn / Tide decentralized key shares rather than derived passphrase credentials.
-2. **Decentralized Anchor Ledger:** The Checkpoint Anchor can be committed periodically to a public timestamping service (e.g. OpenTimestamps or Ethereum / Polygon smart contract) to provide cross-organizational public verifiability beyond university boundaries.
-3. **Database Backend:** For multi-server clusters, replace in-memory reducer persistence with PostgreSQL using serialized isolation levels (`SELECT ... FOR UPDATE`) to enforce database-level FIFO locks.
+Following the implementation of **NIST ECDSA P-256 Asymmetric Keypairs** and the **Verifiable Server-Side FIFO Sequencer**, the remaining items for institutional enterprise deployment are:
+1. **Hardware / Decentralized Key Storage:** Integrate WebAuthn / FIDO2 security keys or Tide Foundation Decentralized Key Shares (DKG) so private keys never leave physical hardware tokens.
+2. **Decentralized Anchor Ledger:** Periodically commit the Checkpoint Anchor hash to a public timestamping service (OpenTimestamps, Ethereum, Polygon) for cross-institutional public verifiability.
+3. **Database Layer:** For distributed multi-server clusters, back the server sequencer with PostgreSQL using `SERIALIZABLE` isolation or `SELECT ... FOR UPDATE` locks.

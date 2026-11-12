@@ -316,6 +316,45 @@ async function runTestSuite() {
     console.log("  ✓ Multi-party vote cryptographic signature verified and forgery attack prevented (CWE-347).\n");
   }
 
+  // TEST 14: Asymmetric NIST ECDSA P-256 Non-Repudiation & Zero-Secret Public Verifiability
+  {
+    testCount++;
+    console.log(`Test ${testCount}: Asymmetric NIST ECDSA P-256 Non-Repudiation & Public Key Verification`);
+    const reqId = "req-asym-01";
+    const ts = new Date().toISOString();
+
+    // 1. Approver 1 signs with Private Key (No shared secret needed)
+    const sigProof1 = await signApproverVote("approver-1", reqId, "approve", ts);
+    assert(sigProof1.algorithm === "ECDSA-P256-SHA256", "Must use NIST ECDSA P-256 algorithm");
+    assert(sigProof1.publicKeyJwk !== undefined, "Must export public key JWK for public verification");
+
+    const voteEntry1 = {
+      id: "approver-1",
+      requestId: reqId,
+      decision: "approve",
+      votedAt: ts,
+      signatureProof: sigProof1,
+    };
+
+    // 2. Public verifier verifies using public key alone (zero secrets required)
+    const pubVerify = await verifyApproverVoteSignature(voteEntry1);
+    assert(pubVerify.valid === true, "Zero-secret public verification must succeed");
+    assert(pubVerify.publicKeyThumbprint === "AkrqnW47Q5", "Thumbprint must match Dr. Okafor's registered public key");
+
+    // 3. Mathematical Non-Repudiation: Another approver cannot forge Approver 1's signature
+    const sigProof2 = await signApproverVote("approver-2", reqId, "approve", ts);
+    const forgedVote = {
+      id: "approver-1", // Claiming to be Approver 1 but signed with Approver 2's key
+      requestId: reqId,
+      decision: "approve",
+      votedAt: ts,
+      signatureProof: sigProof2,
+    };
+    const forgeryAttempt = await verifyApproverVoteSignature(forgedVote);
+    assert(forgeryAttempt.valid === false, "Cross-approver signature forgery must be mathematically rejected");
+    console.log("  ✓ Non-repudiation verified: Individual ECDSA keypairs prevent signature forgery across panel members.\n");
+  }
+
   console.log("==================================================================");
   console.log(`  ALL ${testCount}/${testCount} SECURITY & WORKFLOW INVARIANTS VERIFIED! `);
   console.log("==================================================================\n");

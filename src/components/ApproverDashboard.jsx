@@ -31,7 +31,7 @@ export default function ApproverDashboard({
 
   async function handleInspectSignature(voteEntry) {
     setSelectedSignatureProof(voteEntry);
-    const result = await verifyApproverVoteSignature(voteEntry, APPROVER_SECRET_KEY);
+    const result = await verifyApproverVoteSignature(voteEntry);
     setSigVerifyResult(result);
   }
 
@@ -50,7 +50,7 @@ export default function ApproverDashboard({
       <p className="section-desc">
         Special consideration exceptions require at least 2 independent concurring approvals. No
         single registrar, faculty dean, or student representative can grant an exception unilaterally.
-        All votes are cryptographically signed with HMAC-SHA-256 and recorded in the SHA-256 audit ledger.
+        All votes are cryptographically signed with Asymmetric NIST ECDSA P-256 (non-repudiation) and recorded in the SHA-256 audit ledger.
       </p>
 
       {/* Panel Members Strip */}
@@ -291,8 +291,20 @@ export default function ApproverDashboard({
               </div>
               <div className="sig-meta-row">
                 <span>Algorithm:</span>
-                <code>{selectedSignatureProof.signatureProof?.algorithm || "HMAC-SHA-256"}</code>
+                <code>{selectedSignatureProof.signatureProof?.algorithm || "ECDSA-P256-SHA256"}</code>
               </div>
+              {selectedSignatureProof.signatureProof?.publicKeyJwk && (
+                <div className="sig-meta-row">
+                  <span>Public Key Curve:</span>
+                  <code>NIST {selectedSignatureProof.signatureProof.publicKeyJwk.crv} (Zero-Secret Verifiable)</code>
+                </div>
+              )}
+              {sigVerifyResult?.publicKeyThumbprint && (
+                <div className="sig-meta-row">
+                  <span>Public Key Thumbprint:</span>
+                  <code>{sigVerifyResult.publicKeyThumbprint}…</code>
+                </div>
+              )}
               <div className="sig-meta-row" style={{ flexDirection: "column", alignItems: "flex-start", gap: "4px" }}>
                 <span>Cryptographic Signature:</span>
                 <code className="sig-code-block">

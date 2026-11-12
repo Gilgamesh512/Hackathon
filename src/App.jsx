@@ -4,8 +4,21 @@ import seed from "./seed.json";
 import {
   computeAuditHash,
   canonicalJsonStringify,
+  signApproverVote,
   GENESIS_PREV_HASH,
 } from "./services/crypto";
+import {
+  checkSequencerAlive,
+  fetchServerState,
+  serverEnrol,
+  serverWithdraw,
+  serverCapacity,
+  serverSubmitRequest,
+  serverCastVote,
+  serverSimulateTamper,
+  serverReset,
+  subscribeServerEvents,
+} from "./services/fairenrolClient";
 import { APPROVER_SECRET_KEY } from "./services/tidecloak";
 import { analyzeFairness } from "./services/fairnessMonitor";
 
@@ -110,6 +123,19 @@ function applyApprovedAction(state, request) {
 }
 
 function reducer(state, event) {
+  // 0. SERVER STATE SYNCHRONIZATION (Multi-Device / Cross-Network Single Source of Truth)
+  if (event.type === "sync_server_state" && event.state) {
+    return {
+      ...state,
+      courses: event.state.courses || state.courses,
+      students: event.state.students || state.students,
+      requests: event.state.requests || state.requests,
+      audit: event.state.audit || state.audit,
+      cleanBackup: event.state.audit || state.cleanBackup,
+      isTampered: Boolean(event.state.isTampered),
+    };
+  }
+
   // 1. ENROL ACTION (Student self-service)
   if (event.type === "enrol") {
     const course = state.courses.find((item) => item.id === event.courseId);
@@ -422,7 +448,9 @@ function reducer(state, event) {
       id: event.approver.id,
       name: event.approver.name,
       title: event.approver.title,
-      votedAt: new Date().toISOString(),
+      decision: event.decision,
+      votedAt: event.signatureProof?.signedAt || new Date().toISOString(),
+      signatureProof: event.signatureProof,
     };
 
     const nextApprovals = isApprove ? [...existingApprovals, voteEntry] : existingApprovals;
@@ -612,6 +640,37 @@ export default function App() {
   const [isTourModalOpen, setIsTourModalOpen] = useState(false);
   const [isVerifierModalOpen, setIsVerifierModalOpen] = useState(false);
   const [isStressModalOpen, setIsStressModalOpen] = useState(false);
+  const [isLiveSequencer, setIsLiveSequencer] = useState(false);
+
+  // 0. Connect to Verifiable Server Sequencer (Port 4000) & Subscribe to SSE Real-Time Stream
+  useEffect(() => {
+    let isMounted = true;
+    let unsubscribeSse = null;
+
+    checkSequencerAlive().then((alive) => {
+      if (!isMounted) return;
+      setIsLiveSequencer(alive);
+      if (alive) {
+        fetchServerState()
+          .then((serverData) => {
+            if (!isMounted) return;
+            dispatch({ type: "sync_server_state", state: serverData });
+          })
+          .catch(console.error);
+
+        unsubscribeSse = subscribeServerEvents((msg) => {
+          if (msg.state && isMounted) {
+            dispatch({ type: "sync_server_state", state: msg.state });
+          }
+        });
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribeSse?.();
+    };
+  }, []);
 
   // Independent Anchor Checkpoint (Head hash of verified clean state)
   const checkpointHash = useMemo(() => {
@@ -738,7 +797,26 @@ export default function App() {
     }
   }
 
-  function handleJoinCourse(course) {
+  async function handleJoinCourse(course) {
+    if (isLiveSequencer) {
+      try {
+        const res = await serverEnrol({
+          courseId: course.id,
+          studentId: currentStudent.id,
+          studentName: currentStudent.name,
+          actor: currentActor.name,
+        });
+        if (res.success) {
+          setNotice(`✓ [Server Sequencer] Enrolment processed atomically: ${res.status}`);
+        } else {
+          setNotice(`Notice: ${res.error || "Could not complete registration."}`);
+        }
+        return;
+      } catch (err) {
+        console.warn("Server enrol failed, falling back to local:", err);
+      }
+    }
+
     dispatch({
       type: "enrol",
       courseId: course.id,
@@ -749,8 +827,23 @@ export default function App() {
     setNotice("Course action processed in strict FIFO waitlist queue.");
   }
 
-  function handleWithdrawCourse(courseId, studentId) {
+  async function handleWithdrawCourse(courseId, studentId) {
     const student = state.students.find((s) => s.id === studentId);
+    if (isLiveSequencer) {
+      try {
+        await serverWithdraw({
+          courseId,
+          studentId,
+          studentName: student?.name || studentId,
+          actor: currentActor.name,
+        });
+        setNotice("✓ [Server Sequencer] Course withdrawal processed. Automated FIFO promotion triggered.");
+        return;
+      } catch (err) {
+        console.warn("Server withdraw failed, falling back to local:", err);
+      }
+    }
+
     dispatch({
       type: "withdraw",
       courseId,
@@ -770,7 +863,21 @@ export default function App() {
     setNotice("Simultaneous race condition resolved deterministically via atomic lock.");
   }
 
-  function handleUpdateCapacity(courseId, newCapacity, actor) {
+  async function handleUpdateCapacity(courseId, newCapacity, actor) {
+    if (isLiveSequencer) {
+      try {
+        await serverCapacity({
+          courseId,
+          capacity: newCapacity,
+          actor,
+        });
+        setNotice(`✓ [Server Sequencer] Course quota adjusted to ${newCapacity} seats. Auto-promotion applied.`);
+        return;
+      } catch (err) {
+        console.warn("Server capacity failed, falling back to local:", err);
+      }
+    }
+
     dispatch({
       type: "capacity",
       courseId,
@@ -823,7 +930,17 @@ export default function App() {
     );
   }
 
-  function handleSubmitRequest(requestData) {
+  async function handleSubmitRequest(requestData) {
+    if (isLiveSequencer) {
+      try {
+        await serverSubmitRequest(requestData);
+        setNotice("✓ [Server Sequencer] Exception proposal broadcast to independent Approver Panel with E2EE evidence.");
+        return;
+      } catch (err) {
+        console.warn("Server proposal submission failed, falling back to local:", err);
+      }
+    }
+
     dispatch({
       type: "request",
       request: requestData,
@@ -831,24 +948,76 @@ export default function App() {
     setNotice("Exception proposal broadcast to the independent Approver Panel with E2EE evidence.");
   }
 
-  function handleVote(requestId, approver) {
+  async function handleVote(requestId, approver) {
+    const ts = new Date().toISOString();
+    let sigProof = null;
+    try {
+      sigProof = await signApproverVote(approver.id, requestId, "approve", ts);
+    } catch (err) {
+      console.warn("Could not generate asymmetric ECDSA signature:", err);
+    }
+
+    if (isLiveSequencer) {
+      try {
+        await serverCastVote({
+          approverId: approver.id,
+          approverName: approver.name,
+          requestId,
+          decision: "approve",
+          signatureProof: sigProof,
+        });
+        setNotice(`✓ [Server Sequencer] Vote mathematically verified via NIST ECDSA P-256 for ${approver.name}.`);
+        return;
+      } catch (err) {
+        alert(`Server rejected vote: ${err.message}`);
+        return;
+      }
+    }
+
     dispatch({
       type: "vote",
       requestId,
       approver,
       decision: "approve",
+      signatureProof: sigProof,
     });
-    setNotice(`Consensus approval vote recorded by ${approver.name}.`);
+    setNotice(`Consensus approval vote cryptographically signed by ${approver.name} (ECDSA P-256).`);
   }
 
-  function handleRejectVote(requestId, approver) {
+  async function handleRejectVote(requestId, approver) {
+    const ts = new Date().toISOString();
+    let sigProof = null;
+    try {
+      sigProof = await signApproverVote(approver.id, requestId, "reject", ts);
+    } catch (err) {
+      console.warn("Could not generate asymmetric ECDSA signature:", err);
+    }
+
+    if (isLiveSequencer) {
+      try {
+        await serverCastVote({
+          approverId: approver.id,
+          approverName: approver.name,
+          requestId,
+          decision: "reject",
+          signatureProof: sigProof,
+        });
+        setNotice(`✓ [Server Sequencer] Rejection vote verified via NIST ECDSA P-256 for ${approver.name}.`);
+        return;
+      } catch (err) {
+        alert(`Server rejected vote: ${err.message}`);
+        return;
+      }
+    }
+
     dispatch({
       type: "vote",
       requestId,
       approver,
       decision: "reject",
+      signatureProof: sigProof,
     });
-    setNotice(`Consensus rejection vote recorded by ${approver.name}.`);
+    setNotice(`Consensus rejection vote recorded by ${approver.name} (ECDSA P-256).`);
   }
 
   function handleCustomAudit(actor, action, reason) {
@@ -871,6 +1040,7 @@ export default function App() {
         tokenName={tokenDisplayName}
         userProfile={user}
         isLoggingIn={isLoggingIn}
+        isLiveSequencer={isLiveSequencer}
         onLogin={handleLogin}
         onLogout={logout}
         onOpenSetup={() => setIsSetupModalOpen(true)}

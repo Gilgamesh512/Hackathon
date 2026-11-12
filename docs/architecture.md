@@ -9,10 +9,11 @@ Mô hình ranh giới: **Control Plane (Lab Manager)** hoàn toàn tách biệt 
 +-------------------------------------------------------------------------------+
 |                        CONTROL PLANE (Management Net)                         |
 |  - Lab Web / FairEnrol (React / Vite)                                         |
-|  - Lab Manager REST API (Port 4000)                                           |
+|  - Lab Manager REST API & Verifiable Server Sequencer (Port 4000)             |
 |  - Target Registry & Anti-SSRF Scope Enforcement                              |
 |  - Lifecycle Controller & Reset Engine                                        |
 |  - Test Engine & Evidence Anchoring (SHA-256 Checksums)                       |
+|  - Asymmetric NIST ECDSA P-256 Quorum Verifier & SSE Real-time Sync           |
 +-------------------------------------------------------------------------------+
                                     | (Authorized Scope & Health Probes)
                                     v

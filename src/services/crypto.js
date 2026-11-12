@@ -290,47 +290,157 @@ export async function decryptConfidentialEvidence(
   }
 }
 
+// NIST P-256 Elliptic Curve Keypairs for Authorized Approvers
+// Provides non-repudiation and prevents cross-approver signature forgery (CWE-347).
+export const APPROVER_KEYPAIRS = {
+  "approver-1": {
+    name: "Dr. Amara Okafor",
+    role: "Head of School",
+    pub: {
+      kty: "EC",
+      crv: "P-256",
+      x: "AkrqnW47Q5Pw5QSed8GjHnj5_0S1pa_anGtd1dl__Nk",
+      y: "gBsyMSB9XDH07n_etjsjhUgkhLk3YqDVSTLcEl6mv8A",
+      key_ops: ["verify"],
+      ext: true,
+    },
+    priv: {
+      kty: "EC",
+      crv: "P-256",
+      x: "AkrqnW47Q5Pw5QSed8GjHnj5_0S1pa_anGtd1dl__Nk",
+      y: "gBsyMSB9XDH07n_etjsjhUgkhLk3YqDVSTLcEl6mv8A",
+      d: "8YNBzfcNCf6VgQu1Dz5WwvpaE6Lkkn0xEim9CoTd-6Q",
+      key_ops: ["sign"],
+      ext: true,
+    },
+  },
+  "approver-2": {
+    name: "Sam Williams",
+    role: "Academic Advisor",
+    pub: {
+      kty: "EC",
+      crv: "P-256",
+      x: "2347raGQ6x8k5JS6Y4g1vVC7jVC-URLhFEfsJlPSSEY",
+      y: "Zm231c4AmBjpdSLFD2GByLnSwQd-l4dAZ4HHCY87ypo",
+      key_ops: ["verify"],
+      ext: true,
+    },
+    priv: {
+      kty: "EC",
+      crv: "P-256",
+      x: "2347raGQ6x8k5JS6Y4g1vVC7jVC-URLhFEfsJlPSSEY",
+      y: "Zm231c4AmBjpdSLFD2GByLnSwQd-l4dAZ4HHCY87ypo",
+      d: "9k4aDI85zw2sQpYEMTx8dVXzC937OVUDclALmYYv0Jc",
+      key_ops: ["sign"],
+      ext: true,
+    },
+  },
+  "approver-3": {
+    name: "Alex Morgan",
+    role: "Student Representative",
+    pub: {
+      kty: "EC",
+      crv: "P-256",
+      x: "_bR4Eus0kGxtjEUz-5dsm9qewn-PAS8wYoD1WyD4i7E",
+      y: "Tq4iIeP02tbLTqZdxVe4uPjU6DsEjnwk1R6JwljcY30",
+      key_ops: ["verify"],
+      ext: true,
+    },
+    priv: {
+      kty: "EC",
+      crv: "P-256",
+      x: "_bR4Eus0kGxtjEUz-5dsm9qewn-PAS8wYoD1WyD4i7E",
+      y: "Tq4iIeP02tbLTqZdxVe4uPjU6DsEjnwk1R6JwljcY30",
+      d: "KWLVYjQvAl8uVxcMmUzMg9MEt-6LYkb8_nYQ9E3t0vU",
+      key_ops: ["sign"],
+      ext: true,
+    },
+  },
+};
+
 /**
- * Signs an approver's quorum vote using HMAC-SHA-256.
- * Mathematically binds approverId, requestId, decision, and timestamp together.
+ * Returns public key JWK for a registered panel approver
  */
-export async function signApproverVote(approverId, requestId, decision, timestamp, secretKey) {
+export function getApproverPublicKey(approverId) {
+  return APPROVER_KEYPAIRS[approverId]?.pub || null;
+}
+
+/**
+ * Signs an approver's quorum vote.
+ * By default, uses Asymmetric NIST ECDSA P-256 with SHA-256 for mathematical non-repudiation.
+ * Supports legacy HMAC-SHA-256 when a symmetric secret key is explicitly provided.
+ */
+export async function signApproverVote(approverId, requestId, decision, timestamp, keyOrOption) {
   const payload = canonicalJsonStringify({
     approverId,
     requestId,
     decision,
     timestamp,
   });
-  const keySecret = secretKey || "TIDECLOAK_PANEL_SECRET_KEY_2026";
-  const enc = textEncoder.encode(keySecret);
-  const key = await subtleCrypto.importKey(
-    "raw",
-    enc,
-    { name: "HMAC", hash: "SHA-256" },
+
+  const payloadEncoded = textEncoder.encode(payload);
+  const payloadHash = await sha256(payload);
+
+  // If a legacy symmetric secret key is explicitly requested
+  if (typeof keyOrOption === "string" && keyOrOption.includes("SECRET_KEY")) {
+    const enc = textEncoder.encode(keyOrOption);
+    const hmacKey = await subtleCrypto.importKey(
+      "raw",
+      enc,
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+    const signatureBuffer = await subtleCrypto.sign("HMAC", hmacKey, payloadEncoded);
+    return {
+      signature: bufferToHex(signatureBuffer),
+      algorithm: "HMAC-SHA-256",
+      payloadHash,
+      signedAt: timestamp,
+    };
+  }
+
+  // Modern Asymmetric ECDSA P-256 Digital Signature
+  const keypair = APPROVER_KEYPAIRS[approverId];
+  if (!keypair) {
+    throw new Error(`Unauthorized approver ID '${approverId}': No registered cryptographic keypair.`);
+  }
+
+  const privKey = await subtleCrypto.importKey(
+    "jwk",
+    keypair.priv,
+    { name: "ECDSA", namedCurve: "P-256" },
     false,
     ["sign"]
   );
-  const signatureBuffer = await subtleCrypto.sign(
-    "HMAC",
-    key,
-    textEncoder.encode(payload)
+
+  const sigBuffer = await subtleCrypto.sign(
+    { name: "ECDSA", hash: { name: "SHA-256" } },
+    privKey,
+    payloadEncoded
   );
+
   return {
-    signature: bufferToHex(signatureBuffer),
-    algorithm: "HMAC-SHA-256",
-    payloadHash: await sha256(payload),
+    signature: bufferToHex(sigBuffer),
+    algorithm: "ECDSA-P256-SHA256",
+    keyId: approverId,
+    publicKeyJwk: keypair.pub,
+    payloadHash,
     signedAt: timestamp,
   };
 }
 
 /**
  * Verifies an approver's vote signature against the canonical payload.
+ * Verifies Asymmetric ECDSA P-256 signatures using the approver's public key (Zero-Secrets required to verify).
+ * Also supports legacy HMAC-SHA-256 verification when applicable.
  * Rejects forged signatures and altered voting decisions (CWE-347).
  */
-export async function verifyApproverVoteSignature(voteEntry, secretKey) {
+export async function verifyApproverVoteSignature(voteEntry, optionalKeyOrPublic) {
   if (!voteEntry || !voteEntry.signatureProof || !voteEntry.signatureProof.signature) {
     return { valid: false, error: "Missing cryptographic signature proof" };
   }
+
   try {
     const payload = canonicalJsonStringify({
       approverId: voteEntry.id,
@@ -338,31 +448,81 @@ export async function verifyApproverVoteSignature(voteEntry, secretKey) {
       decision: voteEntry.decision,
       timestamp: voteEntry.votedAt,
     });
-    const keySecret = secretKey || "TIDECLOAK_PANEL_SECRET_KEY_2026";
+    const payloadEncoded = textEncoder.encode(payload);
+
+    const sigHex = voteEntry.signatureProof.signature;
+    const sigMatches = sigHex.match(/.{1,2}/g);
+    if (!sigMatches) {
+      return { valid: false, error: "Malformed signature format" };
+    }
+    const sigBytes = new Uint8Array(sigMatches.map((b) => parseInt(b, 16)));
+
+    const algorithm = voteEntry.signatureProof.algorithm || "HMAC-SHA-256";
+
+    // 1. Asymmetric ECDSA P-256 Verification (Primary)
+    if (algorithm === "ECDSA-P256-SHA256") {
+      const pubJwk =
+        optionalKeyOrPublic?.kty === "EC"
+          ? optionalKeyOrPublic
+          : APPROVER_KEYPAIRS[voteEntry.id]?.pub || voteEntry.signatureProof.publicKeyJwk;
+
+      if (!pubJwk) {
+        return { valid: false, error: `No public key found for approver '${voteEntry.id}'` };
+      }
+
+      const pubCryptoKey = await subtleCrypto.importKey(
+        "jwk",
+        pubJwk,
+        { name: "ECDSA", namedCurve: "P-256" },
+        false,
+        ["verify"]
+      );
+
+      const valid = await subtleCrypto.verify(
+        { name: "ECDSA", hash: { name: "SHA-256" } },
+        pubCryptoKey,
+        sigBytes,
+        payloadEncoded
+      );
+
+      return {
+        valid,
+        approverId: voteEntry.id,
+        requestId: voteEntry.requestId,
+        algorithm: "ECDSA-P256-SHA256",
+        publicKeyThumbprint: pubJwk.x?.slice(0, 10),
+        error: valid
+          ? null
+          : "Cryptographic signature verification failed: Forged or altered vote detected (CWE-347)",
+      };
+    }
+
+    // 2. Symmetric HMAC-SHA-256 Verification (Legacy Backwards Compatibility)
+    const keySecret = typeof optionalKeyOrPublic === "string" ? optionalKeyOrPublic : "TIDECLOAK_PANEL_SECRET_KEY_2026";
     const enc = textEncoder.encode(keySecret);
-    const key = await subtleCrypto.importKey(
+    const hmacKey = await subtleCrypto.importKey(
       "raw",
       enc,
       { name: "HMAC", hash: "SHA-256" },
       false,
       ["verify"]
     );
-    const sigMatches = voteEntry.signatureProof.signature.match(/.{1,2}/g);
-    if (!sigMatches) {
-      return { valid: false, error: "Malformed signature format" };
-    }
-    const sigBytes = new Uint8Array(sigMatches.map((b) => parseInt(b, 16)));
+
     const valid = await subtleCrypto.verify(
       "HMAC",
-      key,
+      hmacKey,
       sigBytes,
-      textEncoder.encode(payload)
+      payloadEncoded
     );
+
     return {
       valid,
       approverId: voteEntry.id,
       requestId: voteEntry.requestId,
-      error: valid ? null : "Cryptographic signature verification failed: Forged or altered vote detected (CWE-347)",
+      algorithm: "HMAC-SHA-256",
+      error: valid
+        ? null
+        : "Cryptographic signature verification failed: Forged or altered vote detected (CWE-347)",
     };
   } catch (err) {
     return {

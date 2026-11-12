@@ -1,10 +1,13 @@
-// Lab Manager Control Plane API Server
-// Exposes REST APIs for Target Registry, Lifecycle Management, and Security Test Runs.
+// Lab Manager Control Plane API Server & FairEnrol Verifiable Server Sequencer
+// Exposes REST APIs for Target Registry, Lifecycle Management, Security Test Runs,
+// and FairEnrol Atomic State Machine with Server-Sent Events (SSE).
 
 import http from "node:http";
 import { TargetRegistry } from "./registry.js";
 import { TargetLifecycleManager } from "./lifecycle.js";
 import { TestEngine } from "./testEngine.js";
+import { FairEnrolSequencer } from "../server/sequencer.js";
+import { APPROVER_KEYPAIRS } from "../services/crypto.js";
 
 export function createLabManagerServer() {
   const registry = new TargetRegistry();
@@ -12,6 +15,7 @@ export function createLabManagerServer() {
 
   const lifecycle = new TargetLifecycleManager(registry);
   const testEngine = new TestEngine(registry, lifecycle);
+  const sequencer = new FairEnrolSequencer();
 
   const server = http.createServer(async (req, res) => {
     // CORS headers
@@ -182,6 +186,97 @@ export function createLabManagerServer() {
         return sendJson(400, { error: "Target 'custom-api-vault' is not running." });
       }
 
+      // =========================================================================
+      // FAIRENROL VERIFIABLE SERVER SEQUENCER REST & SSE ENDPOINTS
+      // =========================================================================
+
+      // 14. GET /api/fairenrol/state - Returns canonical courses, requests, audit ledger & checkpoint anchor
+      if (pathname === "/api/fairenrol/state" && req.method === "GET") {
+        return sendJson(200, sequencer.getState());
+      }
+
+      // 15. GET /api/fairenrol/events - Server-Sent Events (SSE) stream for cross-network multi-client sync
+      if (pathname === "/api/fairenrol/events" && req.method === "GET") {
+        return sequencer.registerSseClient(req, res);
+      }
+
+      // 16. POST /api/fairenrol/enrol - Atomic FIFO Enrolment Lock
+      if (pathname === "/api/fairenrol/enrol" && req.method === "POST") {
+        const body = await readBody();
+        try {
+          const result = await sequencer.enrol(body);
+          return sendJson(result.success ? 200 : 400, result);
+        } catch (err) {
+          return sendJson(400, { success: false, error: err.message });
+        }
+      }
+
+      // 17. POST /api/fairenrol/withdraw - Atomic Seat Release & FIFO Promotion
+      if (pathname === "/api/fairenrol/withdraw" && req.method === "POST") {
+        const body = await readBody();
+        try {
+          const result = await sequencer.withdraw(body);
+          return sendJson(result.success ? 200 : 400, result);
+        } catch (err) {
+          return sendJson(400, { success: false, error: err.message });
+        }
+      }
+
+      // 18. POST /api/fairenrol/capacity - Authorized Quota Update & Auto-Promotion Sweep
+      if (pathname === "/api/fairenrol/capacity" && req.method === "POST") {
+        const body = await readBody();
+        try {
+          const result = await sequencer.updateCapacity(body);
+          return sendJson(200, result);
+        } catch (err) {
+          return sendJson(400, { success: false, error: err.message });
+        }
+      }
+
+      // 19. POST /api/fairenrol/requests - Submit Exception Proposal with E2EE
+      if (pathname === "/api/fairenrol/requests" && req.method === "POST") {
+        const body = await readBody();
+        try {
+          const result = await sequencer.submitRequest(body);
+          return sendJson(201, result);
+        } catch (err) {
+          return sendJson(400, { success: false, error: err.message });
+        }
+      }
+
+      // 20. POST /api/fairenrol/vote - Approver Quorum Vote with Server-Side Asymmetric Verification
+      if (pathname === "/api/fairenrol/vote" && req.method === "POST") {
+        const body = await readBody();
+        try {
+          const result = await sequencer.vote(body);
+          return sendJson(200, result);
+        } catch (err) {
+          return sendJson(400, { success: false, error: err.message });
+        }
+      }
+
+      // 21. POST /api/fairenrol/tamper - Simulate Server Ledger Tampering
+      if (pathname === "/api/fairenrol/tamper" && req.method === "POST") {
+        const body = await readBody();
+        const result = await sequencer.simulateTamper(body.mode || "single");
+        return sendJson(200, result);
+      }
+
+      // 22. POST /api/fairenrol/reset - Restore Clean Seed Ledger State
+      if (pathname === "/api/fairenrol/reset" && req.method === "POST") {
+        await sequencer.restoreCleanLedger();
+        return sendJson(200, { success: true, message: "Server state and ledger restored to clean Genesis." });
+      }
+
+      // 23. GET /api/fairenrol/keys - Public Key Directory for All Registered Approvers
+      if (pathname === "/api/fairenrol/keys" && req.method === "GET") {
+        const publicKeys = {};
+        for (const [id, kp] of Object.entries(APPROVER_KEYPAIRS)) {
+          publicKeys[id] = { name: kp.name, role: kp.role, pub: kp.pub };
+        }
+        return sendJson(200, { approverPublicKeys: publicKeys });
+      }
+
       sendJson(404, { error: "Endpoint not found" });
     } catch (err) {
       console.error("Lab API Error:", err);
@@ -189,7 +284,7 @@ export function createLabManagerServer() {
     }
   });
 
-  return { server, registry, lifecycle, testEngine };
+  return { server, registry, lifecycle, testEngine, sequencer };
 }
 
 // Standalone execution entrypoint

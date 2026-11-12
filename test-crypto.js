@@ -102,7 +102,38 @@ async function runTests() {
   assert.equal(verifyForgedResult.valid, false, "Tampered vote decision must fail verification");
   console.log("✓ Forged vote decision detected & blocked successfully (CWE-347):", verifyForgedResult.error);
 
-  console.log("\nALL CRYPTOGRAPHIC TESTS PASSED (7/7)!");
+  // 8. Modern Asymmetric NIST ECDSA P-256 Digital Signature (No Shared Secret)
+  const ecdsaProof = await signApproverVote("approver-1", "req-ecdsa-01", "approve", timestamp);
+  assert.ok(ecdsaProof.signature && ecdsaProof.signature.length === 128, "ECDSA P-256 signature must be 128-char hex (64-byte r||s)");
+  assert.equal(ecdsaProof.algorithm, "ECDSA-P256-SHA256");
+  assert.ok(ecdsaProof.publicKeyJwk, "ECDSA proof must contain public key JWK");
+  console.log("✓ Asymmetric ECDSA P-256 digital signature created without shared secret:", ecdsaProof.signature.slice(0, 16) + "…");
+
+  // 9. Zero-Secret Public Key Verification (Public Verifier)
+  const ecdsaVoteEntry = {
+    id: "approver-1",
+    requestId: "req-ecdsa-01",
+    decision: "approve",
+    votedAt: timestamp,
+    signatureProof: ecdsaProof,
+  };
+  // Anyone can verify using public key only (null / no secret key required)
+  const ecdsaVerifyResult = await verifyApproverVoteSignature(ecdsaVoteEntry);
+  assert.equal(ecdsaVerifyResult.valid, true, "ECDSA signature must verify successfully using public key alone");
+  assert.equal(ecdsaVerifyResult.algorithm, "ECDSA-P256-SHA256");
+  console.log("✓ Zero-secret public verification passed for Dr. Amara Okafor (Thumbprint:", ecdsaVerifyResult.publicKeyThumbprint + ")");
+
+  // 10. Non-Repudiation & Cross-Approver Forgery Prevention (CWE-347)
+  // Malicious attacker attempts to attribute Dr. Okafor's signature to Alex Morgan (approver-3)
+  const spoofedVoteEntry = {
+    ...ecdsaVoteEntry,
+    id: "approver-3", // Attributing Dr. Okafor's signature to Student Rep
+  };
+  const spoofResult = await verifyApproverVoteSignature(spoofedVoteEntry);
+  assert.equal(spoofResult.valid, false, "Signature must fail verification when attributed to another approver");
+  console.log("✓ Cross-approver identity spoofing blocked successfully:", spoofResult.error);
+
+  console.log("\nALL CRYPTOGRAPHIC TESTS PASSED (10/10)!");
 }
 
 runTests().catch((err) => {

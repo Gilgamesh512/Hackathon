@@ -5,6 +5,7 @@ export default function Header({
   tokenName,
   userProfile,
   isLoggingIn,
+  isLiveSequencer,
   onLogin,
   onLogout,
   onOpenSetup,
@@ -62,6 +63,20 @@ export default function Header({
         >
           <span className="icon-gear">⚙</span> TideCloak
         </button>
+
+        <span
+          className={`auth-state ${isLiveSequencer ? "connected" : "disconnected"}`}
+          title={
+            isLiveSequencer
+              ? "Verifiable Server Sequencer Active on Port 4000 (Atomic Mutex & SSE Synchronizer)"
+              : "Running in Resilient Local Mode (Start 'npm run server' for live multi-computer sync)"
+          }
+        >
+          <i />
+          <span className="auth-label">
+            {isLiveSequencer ? "🟢 Sequencer (4000)" : "Local Mode"}
+          </span>
+        </span>
 
         <span
           className={`auth-state ${authenticated ? "connected" : "disconnected"}`}

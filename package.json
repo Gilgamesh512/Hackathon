@@ -10,7 +10,9 @@
     "test:crypto": "node test-crypto.js",
     "test:invariants": "node test-fairenrol.js",
     "test:lab": "node test/lab/test-lab-manager.js",
-    "test:all": "npm test && npm run test:lab",
+    "test:sequencer": "node test/test-server-sequencer.js",
+    "test:all": "npm test && npm run test:lab && npm run test:sequencer",
+    "server": "node src/lab/server.js",
     "lab:server": "node src/lab/server.js"
   },
   "dependencies": {
