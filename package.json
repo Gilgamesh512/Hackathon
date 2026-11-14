@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "start": "node start.js",
     "dev": "vite",
     "build": "vite build",
     "test": "node test-crypto.js && node test-fairenrol.js",

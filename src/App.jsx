@@ -21,6 +21,7 @@ import {
 } from "./services/fairenrolClient";
 import { APPROVER_SECRET_KEY } from "./services/tidecloak";
 import { analyzeFairness } from "./services/fairnessMonitor";
+import { broadcastCrossTab, subscribeCrossTab } from "./services/crossTabSync";
 
 import Header from "./components/Header";
 import CourseGrid from "./components/CourseGrid";

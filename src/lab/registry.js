@@ -11,7 +11,7 @@ export function parseSimpleYaml(yamlContent) {
   const result = {};
   const lines = yamlContent.split("\n");
   let currentKey = null;
-  let currentArray = null;
+  let isMultilineScalar = false;
 
   for (let rawLine of lines) {
     const line = rawLine.replace(/\r$/, "");
@@ -26,14 +26,22 @@ export function parseSimpleYaml(yamlContent) {
       const val = trimmed.slice(colonIdx + 1).trim();
 
       currentKey = key;
-      currentArray = null;
-
-      if (val === "" || val === ">-") {
+      if (val === ">-" || val === ">" || val === "|" || val === "|-") {
+        result[key] = "";
+        isMultilineScalar = true;
+      } else if (val === "") {
         result[key] = {};
+        isMultilineScalar = false;
       } else {
         result[key] = val.replace(/^["']|["']$/g, "");
+        isMultilineScalar = false;
       }
-    } else if (indent === 2 && currentKey && typeof result[currentKey] === "object") {
+    } else if (indent >= 2 && currentKey && isMultilineScalar) {
+      if (typeof result[currentKey] !== "string") {
+        result[currentKey] = "";
+      }
+      result[currentKey] = (result[currentKey] ? result[currentKey] + " " : "") + trimmed;
+    } else if (indent === 2 && currentKey && typeof result[currentKey] === "object" && !isMultilineScalar) {
       if (trimmed.startsWith("- ")) {
         if (!Array.isArray(result[currentKey])) {
           result[currentKey] = [];
@@ -45,7 +53,7 @@ export function parseSimpleYaml(yamlContent) {
         const subVal = trimmed.slice(colonIdx + 1).trim();
         result[currentKey][subKey] = subVal.replace(/^["']|["']$/g, "");
       }
-    } else if (indent >= 4 && currentKey) {
+    } else if (indent >= 4 && currentKey && !isMultilineScalar) {
       if (trimmed.startsWith("- ")) {
         // Nested array under subkey
         const subKeys = Object.keys(result[currentKey]);
@@ -57,6 +65,12 @@ export function parseSimpleYaml(yamlContent) {
           result[currentKey][lastSubKey].push(trimmed.slice(2).trim().replace(/^["']|["']$/g, ""));
         }
       }
+    }
+  }
+
+  for (const k of Object.keys(result)) {
+    if (k === "description" && typeof result[k] === "object" && !Array.isArray(result[k])) {
+      result[k] = "";
     }
   }
 

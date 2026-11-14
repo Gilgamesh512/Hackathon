@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { verifyAuditChain } from "../services/crypto";
+import { exportQueueIncidentSarif } from "../services/labClient";
 
 export default function AuditLogView({
   auditList,
@@ -65,6 +66,14 @@ export default function AuditLogView({
             title="Export verifiable canonical audit ledger as JSON"
           >
             📥 Export Ledger JSON
+          </button>
+
+          <button
+            className="button outline mini export-sarif-btn"
+            onClick={() => exportQueueIncidentSarif(auditList)}
+            title="Export standard OASIS SARIF v2.1.0 security report for all blocked queue jumps and tamper events"
+          >
+            🛡️ Export Incidents SARIF (.sarif)
           </button>
 
           {!isTampered ? (

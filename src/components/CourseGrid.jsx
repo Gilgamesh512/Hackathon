@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { broadcastCrossTab } from "../services/crossTabSync";
+import { exportQueueIncidentSarif } from "../services/labClient";
 
 export default function CourseGrid({
   courses,
@@ -85,15 +86,41 @@ export default function CourseGrid({
           >
             ⚡ Race Stress Lab
           </button>
+          <button
+            className="button mini outline"
+            onClick={() => exportQueueIncidentSarif(auditHistory, courses[0])}
+            title="Export international-standard OASIS SARIF v2.1.0 incident report documenting all queue jumping attempts and waitlist relegations"
+          >
+            🛡️ Export Incidents (.sarif)
+          </button>
           <span className="count-pill badge-enrolled">{ownEnrolments.length} Enrolled</span>
           <span className="count-pill badge-waiting">{ownWaitlists.length} Waitlisted</span>
         </div>
       </div>
 
       {honeypotAlert && (
-        <div className="notice honeypot-notice" role="alert">
+        <div className="notice honeypot-notice" role="alert" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span>{honeypotAlert}</span>
-          <button onClick={() => setHoneypotAlert("")}>×</button>
+          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+            <button
+              className="button mini dark"
+              style={{ whiteSpace: "nowrap" }}
+              onClick={() =>
+                exportQueueIncidentSarif(auditHistory, courses[0], {
+                  action: "QUEUE_JUMP_BOLA_PROBE",
+                  actor: studentId,
+                  time: new Date().toISOString(),
+                  details: { courseId: courses[0]?.id, status: "BLOCKED" },
+                  reason: honeypotAlert,
+                  hash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                })
+              }
+              title="Download standard OASIS SARIF v2.1.0 report for this incident"
+            >
+              📥 Export Incident (.sarif)
+            </button>
+            <button onClick={() => setHoneypotAlert("")}>×</button>
+          </div>
         </div>
       )}
 

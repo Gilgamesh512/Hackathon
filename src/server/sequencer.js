@@ -488,11 +488,9 @@ export class FairEnrolSequencer {
    */
   async restoreCleanLedger() {
     return this._atomicDispatch(async () => {
-      this.audit = JSON.parse(JSON.stringify(this.cleanBackup));
-      this.checkpointAnchor = this.audit[0]?.hash || null;
-      this.isTampered = false;
+      this.resetState();
       this.broadcastUpdate("LEDGER_RESTORED");
-      return { success: true, isTampered: false };
+      return { success: true, isTampered: false, message: "State and ledger restored to clean Genesis." };
     });
   }
 

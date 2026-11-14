@@ -191,15 +191,20 @@ export default function SecurityLabView() {
                       </span>
                     </div>
 
-                    <p className="target-desc">{t.description}</p>
+                    <p className="target-desc">
+                      {typeof t.description === "string" ? t.description : ""}
+                    </p>
 
                     <div className="target-tags">
-                      {t.category?.map((cat) => (
-                        <span key={cat} className="tag-chip">
-                          {cat}
-                        </span>
-                      ))}
-                      <span className="port-chip">Port :{t.port || "Docker"}</span>
+                      {Array.isArray(t.category) &&
+                        t.category.map((cat) => (
+                          <span key={cat} className="tag-chip">
+                            {cat}
+                          </span>
+                        ))}
+                      <span className="port-chip">
+                        Port :{typeof t.port === "string" || typeof t.port === "number" ? t.port : (t.runtime?.defaultPort || "Docker")}
+                      </span>
                     </div>
 
                     <div className="target-card-footer">
@@ -214,7 +219,11 @@ export default function SecurityLabView() {
                         {isScanning && selectedTargetId === t.id ? "Scanning..." : "Scan Target"}
                       </button>
                       <small className="muted-text">
-                        {t.groundTruthVulnerabilities?.length || 2} Known Vulnerabilities
+                        {(Array.isArray(t.groundTruthVulnerabilities)
+                          ? t.groundTruthVulnerabilities.length
+                          : (Array.isArray(t.testing?.expectedFindings)
+                            ? t.testing.expectedFindings.length
+                            : 2))} Known Vulnerabilities
                       </small>
                     </div>
                   </div>

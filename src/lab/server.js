@@ -51,6 +51,25 @@ export function createLabManagerServer() {
       });
 
     try {
+      // 0. Root Welcome & Directory Route
+      if ((pathname === "/" || pathname === "") && req.method === "GET") {
+        return sendJson(200, {
+          name: "FairEnrol Verifiable Server Sequencer & Security Lab Control Plane",
+          status: "online",
+          version: "0.1.0",
+          webUiUrl: "http://localhost:5137",
+          healthCheck: "/api/health",
+          endpoints: {
+            health: "/api/health",
+            targets: "/api/targets",
+            state: "/api/fairenrol/state",
+            events: "/api/fairenrol/events (SSE)",
+            keys: "/api/fairenrol/keys",
+          },
+          note: "This is the backend REST API & Sequencer. Open the Web UI at http://localhost:5137",
+        });
+      }
+
       // 1. Healthcheck
       if (pathname === "/api/health" && req.method === "GET") {
         return sendJson(200, {
@@ -290,9 +309,10 @@ export function createLabManagerServer() {
 // Standalone execution entrypoint
 if (process.argv[1]?.endsWith("server.js")) {
   const PORT = process.env.LAB_API_PORT || 4000;
+  const HOST = process.env.LAB_API_HOST || "0.0.0.0";
   const { server } = createLabManagerServer();
-  server.listen(PORT, "127.0.0.1", () => {
-    console.log(`[Lab Manager] Control Plane API listening on http://127.0.0.1:${PORT}`);
+  server.listen(PORT, HOST, () => {
+    console.log(`[Lab Manager] Control Plane API listening on http://${HOST}:${PORT}`);
     console.log(`[Lab Manager] Endpoints: /api/targets, /api/test-runs, /api/findings, /api/health`);
   });
 }

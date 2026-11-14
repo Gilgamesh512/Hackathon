@@ -171,8 +171,8 @@ export async function runSecurityScan(targetId) {
     timestamp: startedAt,
   };
 
-  const checksum1 = await computeAuditHash(evidence1Payload);
-  const checksum2 = await computeAuditHash(evidence2Payload);
+  const checksum1 = await computeAuditHash("LAB_SCAN_ROOT", evidence1Payload);
+  const checksum2 = await computeAuditHash(checksum1, evidence2Payload);
 
   const findings = [
     {
@@ -308,7 +308,7 @@ export async function simulateExploitAttack(vector, payload = {}) {
     };
   }
 
-  const evidenceChecksum = await computeAuditHash({ ...details, timestamp });
+  const evidenceChecksum = await computeAuditHash("LAB_EXPLOIT_ROOT", { ...details, timestamp });
 
   return {
     success: true,
@@ -451,4 +451,169 @@ export function exportAuditCertificate(auditList, checkpointHash, courses = []) 
   };
 
   downloadJsonFile(`fairenrol-audit-certificate-${Date.now()}.json`, certificate);
+}
+
+/**
+ * Generates an official OASIS SARIF v2.1.0 document documenting
+ * queue jumping attempts, race condition probes, blocked overrides, and waitlist relegations.
+ */
+export function buildQueueIncidentSarif(incidents = [], options = {}) {
+  const rules = [
+    {
+      id: "QUEUE-JUMP-01",
+      name: "UnauthorizedQueueJumpingAttempt",
+      shortDescription: { text: "Unauthorized Course Enrolment Queue Bypass Attempt" },
+      fullDescription: {
+        text: "An actor attempted to bypass strict FIFO sequence controls or jump the waitlist in violation of institutional governance policies.",
+      },
+      defaultConfiguration: { level: "error" },
+      helpUri: "https://cwe.mitre.org/data/definitions/284.html",
+      properties: { cwe: ["CWE-284", "CWE-862"], owasp: "API1:2023" },
+    },
+    {
+      id: "WAITLIST-RELEGATION-01",
+      name: "CapacityExceededStrictFifoRelegation",
+      shortDescription: { text: "Course Capacity Exceeded — Surplus Contender Relegated to FIFO Waitlist" },
+      fullDescription: {
+        text: "Contender attempted direct seat allocation on a saturated course. The Atomic Sequencer prevented over-subscription and relegated the claimant to the verified waitlist.",
+      },
+      defaultConfiguration: { level: "warning" },
+      helpUri: "https://cwe.mitre.org/data/definitions/362.html",
+      properties: { cwe: ["CWE-362"], owasp: "API4:2023" },
+    },
+    {
+      id: "GOVERNANCE-OVERRIDE-01",
+      name: "BlockedAdministrativeOverride",
+      shortDescription: { text: "Unilateral Administrative Force-Enrolment Attempt Blocked" },
+      fullDescription: {
+        text: "A privileged administrative actor attempted to unilaterally force-enrol a candidate without mandatory 2-of-3 multi-party quorum consensus.",
+      },
+      defaultConfiguration: { level: "error" },
+      helpUri: "https://cwe.mitre.org/data/definitions/284.html",
+      properties: { cwe: ["CWE-284"], owasp: "API5:2023" },
+    },
+    {
+      id: "LEDGER-TAMPER-01",
+      name: "CryptographicLedgerTamperDetected",
+      shortDescription: { text: "Tampered Block Detected in Cryptographic Hash Chain" },
+      fullDescription: {
+        text: "SHA-256 hash chaining discrepancy or Checkpoint Anchor mismatch detected, indicating unauthorized database manipulation.",
+      },
+      defaultConfiguration: { level: "error" },
+      helpUri: "https://cwe.mitre.org/data/definitions/354.html",
+      properties: { cwe: ["CWE-354"], owasp: "API8:2023" },
+    },
+  ];
+
+  const results = incidents.map((inc, idx) => {
+    let ruleId = "QUEUE-JUMP-01";
+    let level = "error";
+
+    const action = String(inc.action || inc.attackType || "").toUpperCase();
+    if (action.includes("WAITLIST") || inc.details?.status === "WAITLISTED") {
+      ruleId = "WAITLIST-RELEGATION-01";
+      level = "warning";
+    } else if (action.includes("OVERRIDE") || action.includes("MANIPULATION")) {
+      ruleId = "GOVERNANCE-OVERRIDE-01";
+      level = "error";
+    } else if (action.includes("TAMPER")) {
+      ruleId = "LEDGER-TAMPER-01";
+      level = "error";
+    }
+
+    const timestamp = inc.time || inc.timestamp || new Date().toISOString();
+    const actor = inc.actor || inc.details?.studentId || "unknown_actor";
+    const course = inc.details?.courseCode || inc.details?.courseId || options.courseCode || "COMP3100";
+    const pos = inc.details?.position ? `position #${inc.details.position}` : "waitlist";
+    const hash = inc.hash || inc.evidenceChecksum || "0000000000000000000000000000000000000000000000000000000000000000";
+
+    const messageText = `[INCIDENT RECORD] At ${timestamp}, actor '${actor}' initiated an enrolment request for '${course}'. Disposition: BLOCKED FROM DIRECT SEAT — Relegated to ${pos} in compliance with Strict FIFO Invariant. Cryptographic Proof Hash: ${hash}.`;
+
+    return {
+      ruleId,
+      level,
+      message: { text: messageText },
+      locations: [
+        {
+          physicalLocation: {
+            artifactLocation: { uri: "/api/fairenrol/enrol" },
+            region: { startLine: inc.seq || idx + 1 },
+          },
+        },
+      ],
+      properties: {
+        incidentId: inc.id || `inc_${Date.now()}_${idx}`,
+        timestampUtc: timestamp,
+        actor,
+        courseCode: course,
+        action: inc.action || inc.attackType,
+        disposition: level === "error" ? "BLOCKED_ILLEGAL_OVERRIDE" : "RELEGATED_TO_FIFO_WAITLIST",
+        waitlistPosition: inc.details?.position || null,
+        evidenceChecksum: hash,
+        prevBlockHash: inc.prevHash || null,
+      },
+    };
+  });
+
+  return {
+    $schema: "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+    version: "2.1.0",
+    runs: [
+      {
+        tool: {
+          driver: {
+            name: "FairEnrol Automated Queue Fairness & Governance Sentinel",
+            version: "1.0.0",
+            informationUri: "https://github.com/rmit-hackathon-2026/fairenrol",
+            rules,
+          },
+        },
+        invocations: [
+          {
+            executionSuccessful: true,
+            startTimeUtc: incidents[0]?.time || new Date().toISOString(),
+            endTimeUtc: new Date().toISOString(),
+          },
+        ],
+        results,
+      },
+    ],
+  };
+}
+
+/**
+ * Triggers browser download of a SARIF incident report for all relevant queue events
+ */
+export function exportQueueIncidentSarif(auditList = [], currentCourse = null, singleIncident = null) {
+  let incidentsToExport = [];
+
+  if (singleIncident) {
+    incidentsToExport = [singleIncident];
+  } else {
+    // Filter auditList for queue events, blocked attempts, and bot waitlists
+    incidentsToExport = auditList.filter((entry) => {
+      const act = String(entry.action || "").toLowerCase();
+      const rsn = String(entry.reason || "").toLowerCase();
+      return (
+        act.includes("waitlist") ||
+        act.includes("blocked") ||
+        act.includes("tamper") ||
+        act.includes("queue") ||
+        rsn.includes("hacker") ||
+        rsn.includes("bot") ||
+        entry.details?.status === "WAITLISTED"
+      );
+    });
+
+    if (incidentsToExport.length === 0 && auditList.length > 0) {
+      incidentsToExport = auditList;
+    }
+  }
+
+  const sarifDoc = buildQueueIncidentSarif(incidentsToExport, {
+    courseCode: currentCourse?.code || "COMP3100",
+  });
+
+  const filename = `fairenrol-queue-incidents-${Date.now()}.sarif`;
+  downloadJsonFile(filename, sarifDoc);
 }

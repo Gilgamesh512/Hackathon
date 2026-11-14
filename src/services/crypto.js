@@ -90,14 +90,24 @@ export async function sha256(message) {
  * Hash incorporates: sequence number, previous hash, timestamp, actor, action, details, reason.
  */
 export async function computeAuditHash(prevHash, entry) {
+  // Support single-argument call: computeAuditHash(entry)
+  if (entry === undefined) {
+    if (typeof prevHash === "object" && prevHash !== null) {
+      entry = prevHash;
+      prevHash = entry.prevHash || GENESIS_PREV_HASH;
+    } else {
+      entry = {};
+    }
+  }
+
   const canonicalPayload = {
-    seq: entry.seq ?? 1,
-    prevHash: prevHash || GENESIS_PREV_HASH,
-    time: entry.time,
-    actor: entry.actor,
-    action: entry.action,
-    details: entry.details || {},
-    reason: entry.reason || "",
+    seq: entry?.seq ?? 1,
+    prevHash: (typeof prevHash === "string" ? prevHash : null) || entry?.prevHash || GENESIS_PREV_HASH,
+    time: entry?.time || entry?.timestamp || new Date().toISOString(),
+    actor: entry?.actor || "system",
+    action: entry?.action || entry?.attackType || "audit",
+    details: entry?.details || entry?.payloadSummary || {},
+    reason: entry?.reason || entry?.indicator || "",
   };
 
   const serialized = canonicalJsonStringify(canonicalPayload);
