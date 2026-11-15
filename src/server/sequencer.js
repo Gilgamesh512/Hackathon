@@ -18,6 +18,8 @@ import {
 } from "../services/crypto.js";
 
 const SEED_PATH = path.resolve(process.cwd(), "src/seed.json");
+const DATA_DIR = path.resolve(process.cwd(), "src/server/data");
+const PERSIST_PATH = path.resolve(DATA_DIR, "state.json");
 
 function loadSeedData() {
   try {
@@ -54,9 +56,11 @@ const GENESIS_BLOCK_2 = {
 };
 
 export class FairEnrolSequencer {
-  constructor() {
+  constructor(options = {}) {
     this._queue = Promise.resolve();
     this.sseClients = new Set();
+    this.persist = Boolean(options.persist);
+    this.persistPath = options.persistPath || PERSIST_PATH;
     this.resetState();
   }
 
@@ -69,7 +73,73 @@ export class FairEnrolSequencer {
     return run;
   }
 
-  resetState() {
+  _savePersistedState() {
+    if (!this.persist) return;
+    try {
+      if (!fs.existsSync(DATA_DIR)) {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+      }
+      const snapshot = {
+        courses: this.courses,
+        students: this.students,
+        panel: this.panel,
+        requests: this.requests,
+        audit: this.audit,
+        checkpointAnchor: this.checkpointAnchor,
+        persistedAt: new Date().toISOString(),
+      };
+      fs.writeFileSync(this.persistPath, JSON.stringify(snapshot, null, 2), "utf-8");
+    } catch (err) {
+      console.error("[Sequencer Persistence] Failed to save state to disk:", err);
+    }
+  }
+
+  _loadPersistedState() {
+    if (!this.persist || !fs.existsSync(this.persistPath)) return null;
+    try {
+      const raw = fs.readFileSync(this.persistPath, "utf-8");
+      return JSON.parse(raw);
+    } catch (err) {
+      console.warn("[Sequencer Persistence] Failed to read persisted state, falling back to seed:", err);
+      return null;
+    }
+  }
+
+  resetState(forceSeed = false) {
+    const saved = !forceSeed ? this._loadPersistedState() : null;
+
+    if (saved && saved.courses && saved.audit) {
+      this.courses = saved.courses;
+      this.students = saved.students;
+      this.panel = saved.panel || [
+        {
+          id: "approver-1",
+          name: "Dr. Amara Okafor",
+          title: "Head of School",
+          publicKey: APPROVER_KEYPAIRS["approver-1"]?.pub,
+        },
+        {
+          id: "approver-2",
+          name: "Sam Williams",
+          title: "Academic Advisor",
+          publicKey: APPROVER_KEYPAIRS["approver-2"]?.pub,
+        },
+        {
+          id: "approver-3",
+          name: "Alex Morgan",
+          title: "Student Representative",
+          publicKey: APPROVER_KEYPAIRS["approver-3"]?.pub,
+        },
+      ];
+      this.requests = saved.requests || [];
+      this.audit = saved.audit;
+      this.checkpointAnchor = saved.checkpointAnchor || this.audit[0]?.hash || null;
+      this.cleanBackup = JSON.parse(JSON.stringify(this.audit));
+      this.isTampered = false;
+      this.broadcastUpdate("STATE_RESTORED_FROM_DISK");
+      return;
+    }
+
     const seed = loadSeedData();
     this.courses = JSON.parse(JSON.stringify(seed.courses));
     this.students = JSON.parse(JSON.stringify(seed.students));
@@ -101,6 +171,7 @@ export class FairEnrolSequencer {
     this.checkpointAnchor = this.audit[0]?.hash || null;
     this.cleanBackup = JSON.parse(JSON.stringify(this.audit));
     this.isTampered = false;
+    this._savePersistedState();
     this.broadcastUpdate("STATE_RESET");
   }
 
@@ -145,6 +216,7 @@ export class FairEnrolSequencer {
     this.audit.unshift(block);
     this.checkpointAnchor = block.hash;
     this.cleanBackup = JSON.parse(JSON.stringify(this.audit));
+    this._savePersistedState();
     return block;
   }
 
@@ -488,7 +560,7 @@ export class FairEnrolSequencer {
    */
   async restoreCleanLedger() {
     return this._atomicDispatch(async () => {
-      this.resetState();
+      this.resetState(true);
       this.broadcastUpdate("LEDGER_RESTORED");
       return { success: true, isTampered: false, message: "State and ledger restored to clean Genesis." };
     });

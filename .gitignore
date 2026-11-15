@@ -29,6 +29,7 @@ pnpm-debug.log*
 data/
 evidence/
 reports/
+src/server/data/
 
 # Editor & OS files
 .vscode/

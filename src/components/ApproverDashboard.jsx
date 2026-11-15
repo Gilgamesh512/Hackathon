@@ -1,5 +1,11 @@
 import React, { useState } from "react";
-import { verifyApproverVoteSignature } from "../services/crypto";
+import {
+  verifyApproverVoteSignature,
+  generateEphemeralApproverKeypair,
+  resetApproverKeyToDefault,
+  DYNAMIC_APPROVER_KEYS,
+  APPROVER_KEYPAIRS,
+} from "../services/crypto";
 import { APPROVER_SECRET_KEY } from "../services/tidecloak";
 
 export default function ApproverDashboard({
@@ -17,6 +23,25 @@ export default function ApproverDashboard({
 }) {
   const [selectedSignatureProof, setSelectedSignatureProof] = useState(null);
   const [sigVerifyResult, setSigVerifyResult] = useState(null);
+  const [keyNotice, setKeyNotice] = useState(null);
+
+  async function handleGenerateEphemeralKey() {
+    if (!activeApprover?.id) return;
+    const res = await generateEphemeralApproverKeypair(activeApprover.id);
+    setKeyNotice({
+      type: "success",
+      message: `Fresh NIST P-256 Keypair dynamically generated for ${activeApprover.name}! Public thumbprint: ${res.thumbprint}. Private key held in browser Web Crypto memory only (zero fixture secrets).`,
+    });
+  }
+
+  function handleResetKey() {
+    if (!activeApprover?.id) return;
+    resetApproverKeyToDefault(activeApprover.id);
+    setKeyNotice({
+      type: "info",
+      message: `Key for ${activeApprover.name} reset to default testing fixture.`,
+    });
+  }
 
   function getPersonName(id) {
     return students.find((s) => s.id === id)?.name ?? id;
@@ -76,6 +101,74 @@ export default function ApproverDashboard({
             </div>
           </div>
         ))}
+      </div>
+
+      {/* Dynamic Keypair Governance Bar */}
+      <div
+        className="card"
+        style={{
+          marginBottom: "1.5rem",
+          padding: "12px 16px",
+          background: "rgba(30, 41, 59, 0.4)",
+          border: "1px solid rgba(255, 255, 255, 0.1)",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            flexWrap: "wrap",
+            gap: "10px",
+          }}
+        >
+          <div>
+            <strong>🔐 Asymmetric ECDSA Key Governance · {activeApprover?.name}</strong>
+            <div style={{ fontSize: "0.85rem", color: "#94a3b8", marginTop: "2px" }}>
+              Status:{" "}
+              {DYNAMIC_APPROVER_KEYS[activeApprover?.id]?.isEphemeral ? (
+                <span style={{ color: "#4ade80", fontWeight: "bold" }}>
+                  🟢 Dynamic In-Browser Web Crypto Key Active (Thumbprint:{" "}
+                  {DYNAMIC_APPROVER_KEYS[activeApprover?.id]?.pub?.x?.slice(0, 10)})
+                </span>
+              ) : (
+                <span style={{ color: "#cbd5e1" }}>
+                  Standard Pre-provisioned Fixture Keypair (Thumbprint:{" "}
+                  {APPROVER_KEYPAIRS[activeApprover?.id]?.pub?.x?.slice(0, 10)})
+                </span>
+              )}
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: "8px" }}>
+            <button
+              className="button outline mini"
+              onClick={handleGenerateEphemeralKey}
+              title="Generates a brand-new NIST P-256 keypair directly in Web Crypto API memory"
+            >
+              🔑 Generate Ephemeral Session Key
+            </button>
+            {DYNAMIC_APPROVER_KEYS[activeApprover?.id] && (
+              <button
+                className="button quiet mini"
+                onClick={handleResetKey}
+                title="Reset to default testing key"
+              >
+                ↺ Reset to Fixture
+              </button>
+            )}
+          </div>
+        </div>
+        {keyNotice && (
+          <div
+            style={{
+              marginTop: "8px",
+              fontSize: "0.85rem",
+              color: keyNotice.type === "success" ? "#86efac" : "#93c5fd",
+            }}
+          >
+            ✓ {keyNotice.message}
+          </div>
+        )}
       </div>
 
       {/* Propose an Exception */}

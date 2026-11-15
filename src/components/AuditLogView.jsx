@@ -1,5 +1,9 @@
 import { useState } from "react";
-import { verifyAuditChain } from "../services/crypto";
+import {
+  verifyAuditChain,
+  generateAnchorNotarizationReceipt,
+  verifyAnchorNotarizationReceipt,
+} from "../services/crypto";
 import { exportQueueIncidentSarif } from "../services/labClient";
 
 export default function AuditLogView({
@@ -15,6 +19,38 @@ export default function AuditLogView({
   const [verificationResult, setVerificationResult] = useState(null);
   const [isVerifying, setIsVerifying] = useState(false);
   const [useAnchorVerification, setUseAnchorVerification] = useState(true);
+  const [notarizationReceipt, setNotarizationReceipt] = useState(null);
+  const [receiptVerification, setReceiptVerification] = useState(null);
+  const [showNotarizationModal, setShowNotarizationModal] = useState(false);
+
+  async function handleGenerateNotarization() {
+    if (!checkpointHash) return;
+    const receipt = await generateAnchorNotarizationReceipt(checkpointHash, auditList);
+    setNotarizationReceipt(receipt);
+    const verifyRes = await verifyAnchorNotarizationReceipt(receipt, checkpointHash);
+    setReceiptVerification(verifyRes);
+    setShowNotarizationModal(true);
+  }
+
+  async function handleVerifyNotarization() {
+    if (!notarizationReceipt) return;
+    const currentHead = auditList[0]?.hash;
+    const verifyRes = await verifyAnchorNotarizationReceipt(notarizationReceipt, currentHead);
+    setReceiptVerification(verifyRes);
+  }
+
+  function handleDownloadReceiptJson() {
+    if (!notarizationReceipt) return;
+    const dataStr =
+      "data:text/json;charset=utf-8," +
+      encodeURIComponent(JSON.stringify(notarizationReceipt, null, 2));
+    const downloadAnchor = document.createElement("a");
+    downloadAnchor.setAttribute("href", dataStr);
+    downloadAnchor.setAttribute("download", `anchor-receipt-${notarizationReceipt.receiptId}.json`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+  }
 
   async function handleVerify() {
     setIsVerifying(true);
@@ -74,6 +110,14 @@ export default function AuditLogView({
             title="Export standard OASIS SARIF v2.1.0 security report for all blocked queue jumps and tamper events"
           >
             🛡️ Export Incidents SARIF (.sarif)
+          </button>
+
+          <button
+            className="button outline mini"
+            onClick={handleGenerateNotarization}
+            title="Generate external OpenTimestamps / witness notarization proof for the Checkpoint Anchor"
+          >
+            🌐 Notarize Anchor (OTS Witness)
           </button>
 
           {!isTampered ? (
@@ -227,6 +271,81 @@ export default function AuditLogView({
           <p className="empty">Actions, approvals, denials and promotions will appear here.</p>
         )}
       </div>
+
+      {showNotarizationModal && notarizationReceipt && (
+        <div className="modal-overlay" onClick={() => setShowNotarizationModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "680px" }}>
+            <div className="modal-header">
+              <h3>🌐 External Checkpoint Anchor Notarization Receipt</h3>
+              <button className="button quiet mini" onClick={() => setShowNotarizationModal(false)}>
+                ✕
+              </button>
+            </div>
+            <div className="modal-body">
+              <p style={{ color: "#94a3b8", fontSize: "0.9rem", marginBottom: "1rem" }}>
+                This receipt cryptographically notarizes the current FairEnrol Checkpoint Anchor with an external public timestamping witness, eliminating single-institution trust.
+              </p>
+
+              <div style={{ background: "rgba(15, 23, 42, 0.7)", borderRadius: "6px", padding: "12px", border: "1px solid rgba(255, 255, 255, 0.1)", marginBottom: "1rem" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "140px 1fr", gap: "8px", fontSize: "0.85rem" }}>
+                  <strong>Receipt ID:</strong>
+                  <code>{notarizationReceipt.receiptId}</code>
+
+                  <strong>Status:</strong>
+                  <span style={{ color: "#4ade80", fontWeight: "bold" }}>● {notarizationReceipt.status}</span>
+
+                  <strong>Protocol:</strong>
+                  <span>{notarizationReceipt.anchorProtocol}</span>
+
+                  <strong>Anchored Hash:</strong>
+                  <code style={{ wordBreak: "break-all" }}>{notarizationReceipt.checkpointHash}</code>
+
+                  <strong>Canonical Merkle Root:</strong>
+                  <code style={{ wordBreak: "break-all" }}>{notarizationReceipt.canonicalMerkleRoot}</code>
+
+                  <strong>Block Count:</strong>
+                  <span>{notarizationReceipt.blockCount} blocks</span>
+
+                  <strong>Notarized At:</strong>
+                  <span>{notarizationReceipt.notarizedAt}</span>
+
+                  <strong>Witness Signature:</strong>
+                  <code style={{ wordBreak: "break-all" }}>{notarizationReceipt.witnessProof}</code>
+                </div>
+              </div>
+
+              {receiptVerification && (
+                <div
+                  style={{
+                    padding: "10px 14px",
+                    borderRadius: "6px",
+                    marginBottom: "1rem",
+                    background: receiptVerification.valid ? "rgba(34, 197, 94, 0.15)" : "rgba(239, 68, 68, 0.15)",
+                    border: `1px solid ${receiptVerification.valid ? "#22c55e" : "#ef4444"}`,
+                    color: receiptVerification.valid ? "#86efac" : "#fca5a5",
+                    fontSize: "0.9rem",
+                  }}
+                >
+                  {receiptVerification.valid ? (
+                    <span>✓ Mathematical Notarization Verified: Witness commitment matches current ledger head perfectly.</span>
+                  ) : (
+                    <span>⛔ Verification Failure: {receiptVerification.error}</span>
+                  )}
+                </div>
+              )}
+
+              <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
+                <button className="button outline mini" onClick={handleVerifyNotarization}>
+                  ↻ Re-verify Against Chain Head
+                </button>
+                <button className="button dark mini" onClick={handleDownloadReceiptJson}>
+                  📥 Download Receipt (.json)
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

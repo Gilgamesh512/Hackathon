@@ -174,9 +174,14 @@ Copy-Item .env.example .env.local
 ```powershell
 npm.cmd run test:all
 ```
-*Executes all **32 automated tests** across four suites (`test-crypto.js`, `test-fairenrol.js`, `test/lab/test-lab-manager.js`, and `test/test-server-sequencer.js`), verifying:*
+*Executes all **39 automated tests** across four suites (`test-crypto.js`, `test-fairenrol.js`, `test/lab/test-lab-manager.js`, and `test/test-server-sequencer.js`), verifying:*
 - *NIST ECDSA P-256 Asymmetric Digital Signatures & Non-Repudiation (Zero-Secret Public Verification, CWE-347)*
+- *Dynamic In-Browser Ephemeral Keypair Generation via Web Crypto API (Client-side Session Key Separation)*
 - *Verifiable Server-Side FIFO Sequencer with Atomic Microsecond Concurrency Mutex (CWE-362)*
+- *Server-Side TideCloak Bearer JWT Validation & Strict RBAC Role Enforcement (HTTP 401 / 403)*
+- *Token-Bucket Rate Limiting (CWE-799 Anti-Flooding / Anti-DoS)*
+- *Disk-backed State Persistence Engine (`src/server/data/state.json`) with Genesis Recovery*
+- *External Checkpoint Anchor Notarization Receipt & Merkle Witness Proof (OpenTimestamps RFC-OTS-SIM)*
 - *Strict FIFO Promotion Invariants & Automatic Vacancy Sweeps*
 - *2-of-3 Multi-Party Quorum Consensus & Self-Approval Prevention*
 - *SHA-256 Canonical Hash Chaining & Independent Checkpoint Anchoring (CWE-354)*

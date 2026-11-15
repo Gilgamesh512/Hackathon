@@ -8,6 +8,10 @@ import {
   decryptConfidentialEvidence,
   signApproverVote,
   verifyApproverVoteSignature,
+  generateEphemeralApproverKeypair,
+  resetApproverKeyToDefault,
+  generateAnchorNotarizationReceipt,
+  verifyAnchorNotarizationReceipt,
 } from "./src/services/crypto.js";
 
 async function runTests() {
@@ -133,7 +137,42 @@ async function runTests() {
   assert.equal(spoofResult.valid, false, "Signature must fail verification when attributed to another approver");
   console.log("✓ Cross-approver identity spoofing blocked successfully:", spoofResult.error);
 
-  console.log("\nALL CRYPTOGRAPHIC TESTS PASSED (10/10)!");
+  // 11. Dynamic Ephemeral ECDSA Keypair Generation (WebAuthn / Hardware Key Emulation)
+  const ephemeralKey = await generateEphemeralApproverKeypair("approver-1");
+  assert.ok(ephemeralKey.publicKeyJwk, "Ephemeral public key must be generated");
+  assert.equal(ephemeralKey.isEphemeral, true);
+  
+  const ephSig = await signApproverVote("approver-1", "req-eph-01", "approve", timestamp);
+  assert.equal(ephSig.isEphemeralKey, true, "Signature must mark ephemeral key source");
+
+  const ephVoteEntry = {
+    id: "approver-1",
+    requestId: "req-eph-01",
+    decision: "approve",
+    votedAt: timestamp,
+    signatureProof: ephSig,
+  };
+  const ephVerifyResult = await verifyApproverVoteSignature(ephVoteEntry);
+  assert.equal(ephVerifyResult.valid, true, "Ephemeral key signature must verify with generated public key");
+  assert.equal(ephVerifyResult.isEphemeralKey, true);
+  console.log("✓ Dynamic ephemeral ECDSA keypair generated and verified in-memory (Thumbprint:", ephVerifyResult.publicKeyThumbprint + ")");
+
+  // Reset to default fixture
+  resetApproverKeyToDefault("approver-1");
+
+  // 12. External Checkpoint Anchor Notarization Receipt & Merkle Proof
+  const anchorReceipt = await generateAnchorNotarizationReceipt(h2, [block1, block2]);
+  assert.ok(anchorReceipt.canonicalMerkleRoot, "Must generate canonical Merkle root");
+  assert.equal(anchorReceipt.checkpointHash, h2);
+
+  const receiptVerify = await verifyAnchorNotarizationReceipt(anchorReceipt, h2);
+  assert.equal(receiptVerify.valid, true, "Valid receipt must verify against current ledger head");
+
+  const tamperedReceiptVerify = await verifyAnchorNotarizationReceipt(anchorReceipt, "corrupted_head_hash_9999");
+  assert.equal(tamperedReceiptVerify.valid, false, "Receipt must reject mismatching head hash");
+  console.log("✓ External Checkpoint Anchor Notarization Receipt generated and mathematically verified against ledger head");
+
+  console.log("\nALL CRYPTOGRAPHIC TESTS PASSED (12/12)!");
 }
 
 runTests().catch((err) => {

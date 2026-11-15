@@ -159,8 +159,67 @@ async function runSequencerTests() {
     assert.equal(auditChainCheck.valid, true, "Final ledger must be 100% cryptographically valid");
     console.log(`  ✓ Successfully verified entire chain of ${auditChainCheck.verifiedCount} blocks against external anchor.\n`);
 
+    // TEST 5: Server-Side TideCloak JWT Bearer Token & RBAC Role Enforcement
+    console.log("Test 5: Server-Side TideCloak JWT Bearer Token & RBAC Role Enforcement");
+    
+    // Helper to forge a mock test JWT token
+    function createMockJwt(roles, username = "testuser", expired = false) {
+      const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
+      const exp = expired ? Math.floor(Date.now() / 1000) - 300 : Math.floor(Date.now() / 1000) + 3600;
+      const payload = Buffer.from(
+        JSON.stringify({
+          sub: "usr-test-123",
+          preferred_username: username,
+          exp,
+          realm_access: { roles },
+        })
+      ).toString("base64url");
+      return `${header}.${payload}.mockSignatureSignature`;
+    }
+
+    // 5a. Unauthorized student token attempting to change course quota (must be rejected with HTTP 403)
+    const studentToken = createMockJwt(["student"], "student_riley");
+    const forbiddenRes = await fetch(`${baseUrl}/capacity`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${studentToken}`,
+      },
+      body: JSON.stringify({ courseId: "comp3100", capacity: 10 }),
+    });
+    assert.equal(forbiddenRes.status, 403, "Student token must be rejected from modifying capacity with HTTP 403");
+    const forbiddenData = await forbiddenRes.json();
+    assert.ok(forbiddenData.error.includes("registrar"), "Error must cite required registrar role");
+    console.log("  ✓ Server enforced RBAC: Unauthorized student token blocked from modifying course quota (HTTP 403).");
+
+    // 5b. Expired token must be rejected with HTTP 401
+    const expiredToken = createMockJwt(["registrar"], "taylor_reed", true);
+    const expiredRes = await fetch(`${baseUrl}/capacity`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${expiredToken}`,
+      },
+      body: JSON.stringify({ courseId: "comp3100", capacity: 10 }),
+    });
+    assert.equal(expiredRes.status, 401, "Expired token must be rejected with HTTP 401");
+    console.log("  ✓ Server rejected expired TideCloak session token (HTTP 401).");
+
+    // 5c. Authorized registrar token must be accepted with HTTP 200
+    const registrarToken = createMockJwt(["registrar"], "taylor_reed");
+    const authorizedRes = await fetch(`${baseUrl}/capacity`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${registrarToken}`,
+      },
+      body: JSON.stringify({ courseId: "comp3100", capacity: 5 }),
+    });
+    assert.equal(authorizedRes.status, 200, "Authorized registrar token must be accepted with HTTP 200");
+    console.log("  ✓ Server accepted authorized TideCloak Bearer JWT token with registrar role (HTTP 200).\n");
+
     console.log("==================================================================");
-    console.log("  ALL SERVER SEQUENCER INVARIANT TESTS PASSED! (4/4)              ");
+    console.log("  ALL SERVER SEQUENCER INVARIANT TESTS PASSED! (5/5)              ");
     console.log("==================================================================\n");
   } finally {
     await new Promise((resolve) => server.close(resolve));

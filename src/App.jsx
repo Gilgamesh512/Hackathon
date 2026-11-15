@@ -18,6 +18,7 @@ import {
   serverSimulateTamper,
   serverReset,
   subscribeServerEvents,
+  setClientAuthToken,
 } from "./services/fairenrolClient";
 import { APPROVER_SECRET_KEY } from "./services/tidecloak";
 import { analyzeFairness } from "./services/fairnessMonitor";
@@ -609,6 +610,7 @@ export default function App() {
     authenticated,
     isInitializing,
     user,
+    token,
     initError,
     login,
     logout,
@@ -616,6 +618,10 @@ export default function App() {
     hasRealmRole,
     checkServerAlive,
   } = useKeycloak();
+
+  useEffect(() => {
+    setClientAuthToken(token);
+  }, [token]);
 
   const [state, dispatch] = useReducer(reducer, {
     courses: seed.courses,

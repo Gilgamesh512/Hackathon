@@ -4,6 +4,23 @@
 
 const SERVER_BASE = "http://localhost:4000/api/fairenrol";
 
+let currentBearerToken = null;
+
+/**
+ * Sets the active TideCloak/Keycloak JWT bearer token to authenticate backend REST requests.
+ */
+export function setClientAuthToken(token) {
+  currentBearerToken = token || null;
+}
+
+function getJsonHeaders() {
+  const headers = { "Content-Type": "application/json" };
+  if (currentBearerToken) {
+    headers["Authorization"] = `Bearer ${currentBearerToken}`;
+  }
+  return headers;
+}
+
 export async function checkSequencerAlive() {
   try {
     const controller = new AbortController();
@@ -25,7 +42,7 @@ export async function fetchServerState() {
 export async function serverEnrol(payload) {
   const res = await fetch(`${SERVER_BASE}/enrol`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: getJsonHeaders(),
     body: JSON.stringify(payload),
   });
   return res.json();
@@ -34,7 +51,7 @@ export async function serverEnrol(payload) {
 export async function serverWithdraw(payload) {
   const res = await fetch(`${SERVER_BASE}/withdraw`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: getJsonHeaders(),
     body: JSON.stringify(payload),
   });
   return res.json();
@@ -43,7 +60,7 @@ export async function serverWithdraw(payload) {
 export async function serverCapacity(payload) {
   const res = await fetch(`${SERVER_BASE}/capacity`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: getJsonHeaders(),
     body: JSON.stringify(payload),
   });
   return res.json();
@@ -52,7 +69,7 @@ export async function serverCapacity(payload) {
 export async function serverSubmitRequest(request) {
   const res = await fetch(`${SERVER_BASE}/requests`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: getJsonHeaders(),
     body: JSON.stringify({ request }),
   });
   return res.json();
@@ -61,7 +78,7 @@ export async function serverSubmitRequest(request) {
 export async function serverCastVote(payload) {
   const res = await fetch(`${SERVER_BASE}/vote`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: getJsonHeaders(),
     body: JSON.stringify(payload),
   });
   const data = await res.json();
@@ -74,14 +91,17 @@ export async function serverCastVote(payload) {
 export async function serverSimulateTamper(mode = "single") {
   const res = await fetch(`${SERVER_BASE}/tamper`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: getJsonHeaders(),
     body: JSON.stringify({ mode }),
   });
   return res.json();
 }
 
 export async function serverReset() {
-  const res = await fetch(`${SERVER_BASE}/reset`, { method: "POST" });
+  const res = await fetch(`${SERVER_BASE}/reset`, {
+    method: "POST",
+    headers: getJsonHeaders(),
+  });
   return res.json();
 }
 

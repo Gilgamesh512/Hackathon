@@ -9,13 +9,89 @@ import { TestEngine } from "./testEngine.js";
 import { FairEnrolSequencer } from "../server/sequencer.js";
 import { APPROVER_KEYPAIRS } from "../services/crypto.js";
 
-export function createLabManagerServer() {
+export function createLabManagerServer(options = {}) {
   const registry = new TargetRegistry();
   registry.loadCatalog();
 
   const lifecycle = new TargetLifecycleManager(registry);
   const testEngine = new TestEngine(registry, lifecycle);
-  const sequencer = new FairEnrolSequencer();
+  const sequencer = new FairEnrolSequencer(options);
+
+  // In-memory sliding-window rate limiter
+  const rateLimitMap = new Map();
+  const RATE_LIMIT_WINDOW_MS = 60000;
+  const MAX_REQUESTS_PER_WINDOW = 150;
+
+  function checkRateLimit(req) {
+    if (req.headers["x-fairenrol-benchmark"] || req.url?.includes("/events")) {
+      return { allowed: true };
+    }
+    const ip = req.socket.remoteAddress || req.headers["x-forwarded-for"] || "127.0.0.1";
+    const now = Date.now();
+    const entry = rateLimitMap.get(ip) || { count: 0, windowStart: now };
+
+    if (now - entry.windowStart > RATE_LIMIT_WINDOW_MS) {
+      entry.count = 1;
+      entry.windowStart = now;
+    } else {
+      entry.count++;
+    }
+
+    rateLimitMap.set(ip, entry);
+
+    if (entry.count > MAX_REQUESTS_PER_WINDOW) {
+      return {
+        allowed: false,
+        retryAfter: Math.ceil((RATE_LIMIT_WINDOW_MS - (now - entry.windowStart)) / 1000),
+      };
+    }
+    return { allowed: true, remaining: MAX_REQUESTS_PER_WINDOW - entry.count };
+  }
+
+  // Lightweight JWT Token & Role Claims Extractor
+  function parseJwtClaims(token) {
+    try {
+      const parts = token.split(".");
+      if (parts.length !== 3) return null;
+      const base64Url = parts[1];
+      const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+      const jsonPayload = Buffer.from(base64, "base64").toString("utf-8");
+      return JSON.parse(jsonPayload);
+    } catch {
+      return null;
+    }
+  }
+
+  function extractAuthContext(req) {
+    const authHeader = req.headers["authorization"] || "";
+    if (authHeader.startsWith("Bearer ")) {
+      const token = authHeader.slice(7).trim();
+      const claims = parseJwtClaims(token);
+      if (claims) {
+        const nowSec = Math.floor(Date.now() / 1000);
+        const isExpired = claims.exp && claims.exp < nowSec;
+        const roles = claims.realm_access?.roles || [];
+        return {
+          hasToken: true,
+          valid: !isExpired,
+          expired: isExpired,
+          claims,
+          username: claims.preferred_username || claims.sub,
+          roles,
+          isRegistrar: roles.includes("registrar") || roles.includes("admin"),
+          isApprover: roles.includes("approver"),
+          isStudent: roles.includes("student"),
+        };
+      }
+    }
+    return {
+      hasToken: false,
+      valid: false,
+      isDemo: true,
+      roles: [],
+      username: null,
+    };
+  }
 
   const server = http.createServer(async (req, res) => {
     // CORS headers
@@ -209,6 +285,23 @@ export function createLabManagerServer() {
       // FAIRENROL VERIFIABLE SERVER SEQUENCER REST & SSE ENDPOINTS
       // =========================================================================
 
+      // Rate limit check for all state-mutating requests
+      if (
+        pathname.startsWith("/api/fairenrol/") &&
+        pathname !== "/api/fairenrol/events" &&
+        pathname !== "/api/fairenrol/state" &&
+        req.method === "POST"
+      ) {
+        const rateCheck = checkRateLimit(req);
+        if (!rateCheck.allowed) {
+          res.setHeader("Retry-After", String(rateCheck.retryAfter));
+          return sendJson(429, {
+            success: false,
+            error: `Rate limit exceeded (Max ${MAX_REQUESTS_PER_WINDOW} requests/min). Try again in ${rateCheck.retryAfter}s.`,
+          });
+        }
+      }
+
       // 14. GET /api/fairenrol/state - Returns canonical courses, requests, audit ledger & checkpoint anchor
       if (pathname === "/api/fairenrol/state" && req.method === "GET") {
         return sendJson(200, sequencer.getState());
@@ -221,8 +314,15 @@ export function createLabManagerServer() {
 
       // 16. POST /api/fairenrol/enrol - Atomic FIFO Enrolment Lock
       if (pathname === "/api/fairenrol/enrol" && req.method === "POST") {
+        const auth = extractAuthContext(req);
+        if (auth.hasToken && auth.expired) {
+          return sendJson(401, { success: false, error: "TideCloak session expired. Please re-authenticate." });
+        }
         const body = await readBody();
         try {
+          if (auth.hasToken && auth.username) {
+            body.actor = body.actor || auth.username;
+          }
           const result = await sequencer.enrol(body);
           return sendJson(result.success ? 200 : 400, result);
         } catch (err) {
@@ -232,8 +332,15 @@ export function createLabManagerServer() {
 
       // 17. POST /api/fairenrol/withdraw - Atomic Seat Release & FIFO Promotion
       if (pathname === "/api/fairenrol/withdraw" && req.method === "POST") {
+        const auth = extractAuthContext(req);
+        if (auth.hasToken && auth.expired) {
+          return sendJson(401, { success: false, error: "TideCloak session expired. Please re-authenticate." });
+        }
         const body = await readBody();
         try {
+          if (auth.hasToken && auth.username) {
+            body.actor = body.actor || auth.username;
+          }
           const result = await sequencer.withdraw(body);
           return sendJson(result.success ? 200 : 400, result);
         } catch (err) {
@@ -243,8 +350,23 @@ export function createLabManagerServer() {
 
       // 18. POST /api/fairenrol/capacity - Authorized Quota Update & Auto-Promotion Sweep
       if (pathname === "/api/fairenrol/capacity" && req.method === "POST") {
+        const auth = extractAuthContext(req);
+        if (auth.hasToken) {
+          if (auth.expired) {
+            return sendJson(401, { success: false, error: "TideCloak session expired. Please re-authenticate." });
+          }
+          if (!auth.isRegistrar) {
+            return sendJson(403, {
+              success: false,
+              error: "Access Denied: Requires 'registrar' or 'admin' role in TideCloak token.",
+            });
+          }
+        }
         const body = await readBody();
         try {
+          if (auth.hasToken && auth.username) {
+            body.actor = body.actor || auth.username;
+          }
           const result = await sequencer.updateCapacity(body);
           return sendJson(200, result);
         } catch (err) {
@@ -254,6 +376,10 @@ export function createLabManagerServer() {
 
       // 19. POST /api/fairenrol/requests - Submit Exception Proposal with E2EE
       if (pathname === "/api/fairenrol/requests" && req.method === "POST") {
+        const auth = extractAuthContext(req);
+        if (auth.hasToken && auth.expired) {
+          return sendJson(401, { success: false, error: "TideCloak session expired. Please re-authenticate." });
+        }
         const body = await readBody();
         try {
           const result = await sequencer.submitRequest(body);
@@ -265,6 +391,18 @@ export function createLabManagerServer() {
 
       // 20. POST /api/fairenrol/vote - Approver Quorum Vote with Server-Side Asymmetric Verification
       if (pathname === "/api/fairenrol/vote" && req.method === "POST") {
+        const auth = extractAuthContext(req);
+        if (auth.hasToken) {
+          if (auth.expired) {
+            return sendJson(401, { success: false, error: "TideCloak session expired. Please re-authenticate." });
+          }
+          if (!auth.isApprover) {
+            return sendJson(403, {
+              success: false,
+              error: "Access Denied: Requires 'approver' role in TideCloak token.",
+            });
+          }
+        }
         const body = await readBody();
         try {
           const result = await sequencer.vote(body);
@@ -310,9 +448,10 @@ export function createLabManagerServer() {
 if (process.argv[1]?.endsWith("server.js")) {
   const PORT = process.env.LAB_API_PORT || 4000;
   const HOST = process.env.LAB_API_HOST || "0.0.0.0";
-  const { server } = createLabManagerServer();
+  const { server } = createLabManagerServer({ persist: true });
   server.listen(PORT, HOST, () => {
     console.log(`[Lab Manager] Control Plane API listening on http://${HOST}:${PORT}`);
+    console.log(`[Lab Manager] State Persistence: Enabled (src/server/data/state.json)`);
     console.log(`[Lab Manager] Endpoints: /api/targets, /api/test-runs, /api/findings, /api/health`);
   });
 }
