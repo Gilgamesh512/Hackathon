@@ -300,6 +300,205 @@ export async function decryptConfidentialEvidence(
   }
 }
 
+// --- SHAMIR'S SECRET SHARING (2-OF-3 THRESHOLD CRYPTOGRAPHY OVER GF(2^8)) ---
+
+function gfMultiply(a, b) {
+  let p = 0;
+  for (let i = 0; i < 8; i++) {
+    if ((b & 1) !== 0) p ^= a;
+    const hiBit = (a & 0x80) !== 0;
+    a = (a << 1) & 0xff;
+    if (hiBit) a ^= 0x1b; // AES irreducible polynomial x^8 + x^4 + x^3 + x + 1
+    b >>= 1;
+  }
+  return p;
+}
+
+function gfInverse(a) {
+  if (a === 0) throw new Error("GF(2^8) Divide by zero");
+  let res = 1;
+  for (let i = 0; i < 254; i++) {
+    res = gfMultiply(res, a);
+  }
+  return res;
+}
+
+function gfDivide(a, b) {
+  return gfMultiply(a, gfInverse(b));
+}
+
+/**
+ * Splits a 32-byte secret into 3 Shamir shares with threshold = 2.
+ * Any single share reveals zero information about the secret.
+ * Any 2 shares can mathematically reconstruct the secret via Lagrange Interpolation.
+ */
+export function splitSecretShamir(secretBytes, threshold = 2, totalShares = 3) {
+  if (!(secretBytes instanceof Uint8Array)) {
+    secretBytes = new Uint8Array(secretBytes);
+  }
+  const length = secretBytes.length;
+  // Generate random non-zero a1 coefficients for each byte
+  const randomCoeffs = getRandomValues(new Uint8Array(length));
+  for (let i = 0; i < length; i++) {
+    if (randomCoeffs[i] === 0) randomCoeffs[i] = 1;
+  }
+
+  const approverRoles = [
+    { approverId: "approver-1", name: "Dr. Amara Okafor", role: "Head of School" },
+    { approverId: "approver-2", name: "Sam Williams", role: "Academic Advisor" },
+    { approverId: "approver-3", name: "Alex Morgan", role: "Student Representative" },
+  ];
+
+  const shares = [];
+  for (let x = 1; x <= totalShares; x++) {
+    const yBytes = new Uint8Array(length);
+    for (let i = 0; i < length; i++) {
+      const s = secretBytes[i];
+      const a1 = randomCoeffs[i];
+      // f(x) = s ^ (a1 * x) in GF(2^8)
+      yBytes[i] = s ^ gfMultiply(a1, x);
+    }
+    const info = approverRoles[x - 1] || { approverId: `approver-${x}`, name: `Approver ${x}` };
+    shares.push({
+      x,
+      yHex: bufferToHex(yBytes),
+      approverId: info.approverId,
+      name: info.name,
+      role: info.role,
+    });
+  }
+
+  return shares;
+}
+
+/**
+ * Reconstructs a secret from at least 2 distinct Shamir shares in GF(2^8).
+ */
+export function reconstructSecretShamir(shares) {
+  if (!Array.isArray(shares) || shares.length < 2) {
+    throw new Error("Quorum Threshold Unmet: Minimum 2 of 3 Shamir shares required to reconstruct cryptographic key.");
+  }
+
+  const [shareA, shareB] = shares;
+  if (shareA.x === shareB.x) {
+    throw new Error("Duplicate or redundant share provided. 2 distinct shares required.");
+  }
+
+  const x1 = shareA.x;
+  const x2 = shareB.x;
+  const y1Bytes = new Uint8Array(
+    shareA.yHex.match(/.{1,2}/g).map((byte) => parseInt(byte, 16))
+  );
+  const y2Bytes = new Uint8Array(
+    shareB.yHex.match(/.{1,2}/g).map((byte) => parseInt(byte, 16))
+  );
+
+  const length = Math.min(y1Bytes.length, y2Bytes.length);
+  const secretBytes = new Uint8Array(length);
+
+  // Lagrange basis polynomials evaluated at x = 0
+  // L1(0) = x2 / (x2 ^ x1)
+  // L2(0) = x1 / (x1 ^ x2)
+  const denom = x2 ^ x1;
+  const L1 = gfDivide(x2, denom);
+  const L2 = gfDivide(x1, denom);
+
+  for (let i = 0; i < length; i++) {
+    secretBytes[i] = gfMultiply(L1, y1Bytes[i]) ^ gfMultiply(L2, y2Bytes[i]);
+  }
+
+  return secretBytes;
+}
+
+/**
+ * Encrypts confidential evidence with AES-GCM-256 and splits the master key
+ * into 3 Shamir shares (2-of-3 threshold) for Dr. Okafor, Sam Williams, Alex Morgan.
+ */
+export async function encryptConfidentialEvidenceWithShamir(plaintext, aadMetadata = null) {
+  const masterKeyBytes = getRandomValues(new Uint8Array(32)); // 256-bit AES key
+  const shamirShares = splitSecretShamir(masterKeyBytes, 2, 3);
+
+  const aesKey = await subtleCrypto.importKey(
+    "raw",
+    masterKeyBytes,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt"]
+  );
+
+  const iv = getRandomValues(new Uint8Array(12));
+  const encodedPlaintext = textEncoder.encode(plaintext);
+
+  const encryptParams = { name: "AES-GCM", iv };
+  let aadString = null;
+  if (aadMetadata) {
+    aadString = typeof aadMetadata === "string" ? aadMetadata : canonicalJsonStringify(aadMetadata);
+    encryptParams.additionalData = textEncoder.encode(aadString);
+  }
+
+  const ciphertextBuffer = await subtleCrypto.encrypt(encryptParams, aesKey, encodedPlaintext);
+
+  return {
+    iv: bufferToBase64(iv),
+    ciphertext: bufferToBase64(ciphertextBuffer),
+    algorithm: "AES-GCM-256-SSS-2OF3",
+    aad: aadString,
+    encryptedAt: new Date().toISOString(),
+    shamirShares,
+    threshold: "2-of-3",
+  };
+}
+
+/**
+ * Decrypts confidential evidence by reconstructing the AES-GCM key from >= 2 Shamir shares.
+ */
+export async function decryptConfidentialEvidenceWithShamir(encryptedPayload, providedShares, aadMetadata = null) {
+  try {
+    if (!providedShares || providedShares.length < 2) {
+      return {
+        success: false,
+        error: "Quorum Threshold Unmet: Exactly 1 share provided. Shamir's Secret Sharing requires at least 2 distinct shares to reconstruct the master key.",
+      };
+    }
+
+    const reconstructedKeyBytes = reconstructSecretShamir(providedShares);
+
+    const aesKey = await subtleCrypto.importKey(
+      "raw",
+      reconstructedKeyBytes,
+      { name: "AES-GCM", length: 256 },
+      false,
+      ["decrypt"]
+    );
+
+    const iv = base64ToBuffer(encryptedPayload.iv);
+    const ciphertext = base64ToBuffer(encryptedPayload.ciphertext);
+    const decryptParams = {
+      name: "AES-GCM",
+      iv: new Uint8Array(iv),
+    };
+
+    const aadToVerify = aadMetadata !== null ? aadMetadata : encryptedPayload.aad;
+    if (aadToVerify) {
+      const aadString = typeof aadToVerify === "string" ? aadToVerify : canonicalJsonStringify(aadToVerify);
+      decryptParams.additionalData = textEncoder.encode(aadString);
+    }
+
+    const decryptedBuffer = await subtleCrypto.decrypt(decryptParams, aesKey, ciphertext);
+
+    return {
+      success: true,
+      plaintext: textDecoder.decode(decryptedBuffer),
+      reconstructedKeyHex: bufferToHex(reconstructedKeyBytes).slice(0, 16) + "…",
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: "Cryptographic Decryption Failed: Invalid authorization key or authentication tag mismatch. Access Denied by AES-GCM-256.",
+    };
+  }
+}
+
 // NIST P-256 Elliptic Curve Keypairs for Authorized Approvers
 // Provides non-repudiation and prevents cross-approver signature forgery (CWE-347).
 export const APPROVER_KEYPAIRS = {
@@ -658,4 +857,141 @@ export async function verifyAnchorNotarizationReceipt(receipt, currentHeadHash) 
     canonicalMerkleRoot: receipt.canonicalMerkleRoot,
   };
 }
+
+// --- VERIFIABLE CRYPTOGRAPHIC SARIF ATTESTATION (NIST ECDSA P-256) ---
+
+export const LAB_CONTROL_PLANE_KEYPAIR = {
+  name: "FairEnrol Security Lab Control Plane Notary",
+  pub: {
+    kty: "EC",
+    crv: "P-256",
+    x: "b_LwFgXlcaiU7LRtlFaJlsayqxlO5LD44Lb3sj4UA2M",
+    y: "Ms1qYl1h_FxZEPx4aq1gZ1Db5WXblt5l_sWjt0EAPRA",
+    key_ops: ["verify"],
+    ext: true,
+  },
+  priv: {
+    kty: "EC",
+    crv: "P-256",
+    x: "b_LwFgXlcaiU7LRtlFaJlsayqxlO5LD44Lb3sj4UA2M",
+    y: "Ms1qYl1h_FxZEPx4aq1gZ1Db5WXblt5l_sWjt0EAPRA",
+    d: "-9yx4a2-Lh3HSjkEh3urR_CraXOZFlySc6OyQbtfz1k",
+    key_ops: ["sign"],
+    ext: true,
+  },
+};
+
+/**
+ * Signs an OASIS SARIF v2.1.0 document with NIST ECDSA P-256
+ * Attaches cryptographic attestation to prevent tampering with scanner findings or accuracy metrics.
+ */
+export async function signSarifDocument(sarifDoc) {
+  // Strip existing attestation to get canonical payload
+  const { attestation: _, ...canonicalSarif } = sarifDoc;
+  const canonicalString = canonicalJsonStringify(canonicalSarif);
+  const canonicalSha256 = await sha256(canonicalString);
+
+  // Import Control Plane Private Key
+  const privKey = await subtleCrypto.importKey(
+    "jwk",
+    LAB_CONTROL_PLANE_KEYPAIR.priv,
+    { name: "ECDSA", namedCurve: "P-256" },
+    false,
+    ["sign"]
+  );
+
+  const signatureBuffer = await subtleCrypto.sign(
+    { name: "ECDSA", hash: { name: "SHA-256" } },
+    privKey,
+    textEncoder.encode(canonicalString)
+  );
+
+  const signatureHex = bufferToHex(signatureBuffer);
+  const signedAt = new Date().toISOString();
+
+  return {
+    ...sarifDoc,
+    attestation: {
+      standard: "OASIS-SARIF-v2.1.0-ECDSA-Attestation",
+      algorithm: "ECDSA-P256-SHA256",
+      signer: LAB_CONTROL_PLANE_KEYPAIR.name,
+      signedAt,
+      signerThumbprint: LAB_CONTROL_PLANE_KEYPAIR.pub.x.slice(0, 10),
+      canonicalSha256,
+      signature: signatureHex,
+      publicKeyJwk: LAB_CONTROL_PLANE_KEYPAIR.pub,
+    },
+  };
+}
+
+/**
+ * Cryptographically verifies a SARIF v2.1.0 document's ECDSA P-256 attestation.
+ * Catches any unauthorized modifications to vulnerabilities, severity, or scanner metrics.
+ */
+export async function verifySarifAttestation(sarifDoc) {
+  if (!sarifDoc || !sarifDoc.attestation) {
+    return {
+      valid: false,
+      error: "Missing Cryptographic Attestation: SARIF document lacks digital signature header.",
+    };
+  }
+
+  const { attestation, ...canonicalContent } = sarifDoc;
+  const canonicalString = canonicalJsonStringify(canonicalContent);
+  const calculatedSha256 = await sha256(canonicalString);
+
+  if (calculatedSha256 !== attestation.canonicalSha256) {
+    return {
+      valid: false,
+      error: `Hash Mismatch (CWE-354): Content modified after signing. Expected ${attestation.canonicalSha256.slice(0, 12)}…, found ${calculatedSha256.slice(0, 12)}…`,
+      tampered: true,
+      calculatedSha256,
+      expectedSha256: attestation.canonicalSha256,
+    };
+  }
+
+  try {
+    const pubKeyJwk = attestation.publicKeyJwk || LAB_CONTROL_PLANE_KEYPAIR.pub;
+    const pubKey = await subtleCrypto.importKey(
+      "jwk",
+      pubKeyJwk,
+      { name: "ECDSA", namedCurve: "P-256" },
+      false,
+      ["verify"]
+    );
+
+    const sigBytes = new Uint8Array(
+      attestation.signature.match(/.{1,2}/g).map((byte) => parseInt(byte, 16))
+    );
+
+    const valid = await subtleCrypto.verify(
+      { name: "ECDSA", hash: { name: "SHA-256" } },
+      pubKey,
+      sigBytes,
+      textEncoder.encode(canonicalString)
+    );
+
+    if (!valid) {
+      return {
+        valid: false,
+        error: "Digital Signature Rejected (CWE-347): Forged or invalid ECDSA signature.",
+      };
+    }
+
+    return {
+      valid: true,
+      signer: attestation.signer,
+      signedAt: attestation.signedAt,
+      signerThumbprint: attestation.signerThumbprint,
+      canonicalSha256: calculatedSha256,
+      algorithm: attestation.algorithm,
+    };
+  } catch (err) {
+    return {
+      valid: false,
+      error: `Cryptographic Verification Error: ${err.message}`,
+    };
+  }
+}
+
 

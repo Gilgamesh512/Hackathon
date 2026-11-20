@@ -11,6 +11,8 @@ import {
   decryptConfidentialEvidence,
   signApproverVote,
   verifyApproverVoteSignature,
+  encryptConfidentialEvidenceWithShamir,
+  decryptConfidentialEvidenceWithShamir,
   GENESIS_PREV_HASH,
 } from "./src/services/crypto.js";
 
@@ -353,6 +355,40 @@ async function runTestSuite() {
     const forgeryAttempt = await verifyApproverVoteSignature(forgedVote);
     assert(forgeryAttempt.valid === false, "Cross-approver signature forgery must be mathematically rejected");
     console.log("  ✓ Non-repudiation verified: Individual ECDSA keypairs prevent signature forgery across panel members.\n");
+  }
+
+  // TEST 15: Shamir's Secret Sharing (2-of-3) Threshold Cryptography for E2EE Evidence
+  {
+    testCount++;
+    console.log(`Test ${testCount}: Shamir's Secret Sharing (2-of-3) Threshold Key Reconstruction`);
+    const confidentialNote = "Sensitive Disability Support Certificate for Student S05";
+    const aad = { studentId: "s05", courseId: "comp3100" };
+    
+    // Encrypt with 2-of-3 Shamir threshold
+    const payload = await encryptConfidentialEvidenceWithShamir(confidentialNote, aad);
+    assert(payload.shamirShares.length === 3, "Payload must yield exactly 3 Shamir shares");
+
+    const [sh1, sh2, sh3] = payload.shamirShares;
+
+    // Single share fails threshold
+    const singleRes = await decryptConfidentialEvidenceWithShamir(payload, [sh1], aad);
+    assert(singleRes.success === false, "1 share alone must not decrypt evidence");
+
+    // Any 2 shares succeed
+    const pair12 = await decryptConfidentialEvidenceWithShamir(payload, [sh1, sh2], aad);
+    assert(pair12.success === true && pair12.plaintext === confidentialNote, "Shares 1+2 must decrypt");
+
+    const pair23 = await decryptConfidentialEvidenceWithShamir(payload, [sh2, sh3], aad);
+    assert(pair23.success === true && pair23.plaintext === confidentialNote, "Shares 2+3 must decrypt");
+
+    const pair13 = await decryptConfidentialEvidenceWithShamir(payload, [sh1, sh3], aad);
+    assert(pair13.success === true && pair13.plaintext === confidentialNote, "Shares 1+3 must decrypt");
+
+    // AAD context binding mismatch with valid shares still fails
+    const replayedAad = { studentId: "s99_MALICIOUS_REPLAY", courseId: "comp3100" };
+    const replayRes = await decryptConfidentialEvidenceWithShamir(payload, [sh1, sh2], replayedAad);
+    assert(replayRes.success === false, "AAD mismatch must fail even with valid threshold shares");
+    console.log("  ✓ 2-of-3 Shamir threshold verified: 1 share blocked, any 2 shares decrypt, AAD binding enforced.\n");
   }
 
   console.log("==================================================================");

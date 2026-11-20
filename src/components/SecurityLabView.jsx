@@ -4,9 +4,12 @@ import {
   runSecurityScan,
   simulateExploitAttack,
   buildSarifDocument,
+  buildSignedSarifDocument,
+  verifySarifDocument,
   downloadJsonFile,
 } from "../services/labClient";
 import { subscribeCrossTab } from "../services/crossTabSync";
+import { useKeycloak } from "../contexts/KeycloakContext";
 
 export default function SecurityLabView() {
   const [targets, setTargets] = useState([]);
@@ -14,8 +17,14 @@ export default function SecurityLabView() {
   const [loading, setLoading] = useState(true);
   const [selectedTargetId, setSelectedTargetId] = useState("custom-api-vault");
 
+  const { triggerQuarantine } = useKeycloak();
+
   const [activeScanRun, setActiveScanRun] = useState(null);
   const [isScanning, setIsScanning] = useState(false);
+
+  const [signedSarifDoc, setSignedSarifDoc] = useState(null);
+  const [sarifVerificationResult, setSarifVerificationResult] = useState(null);
+  const [isVerifyingSarif, setIsVerifyingSarif] = useState(false);
 
   const [selectedVector, setSelectedVector] = useState("BOLA_BOB_RECORD");
   const [exploitResult, setExploitResult] = useState(null);
@@ -111,6 +120,16 @@ export default function SecurityLabView() {
       if (res.capturedEvidence) {
         setTelemetryFeed((prev) => [res.capturedEvidence, ...prev]);
       }
+
+      // Đề xuất 1: TideCloak Adaptive Active Defense Trigger
+      if (selectedVector === "CANARY_TOKEN_TRIP" || res.capturedEvidence?.attackType?.includes("CANARY")) {
+        triggerQuarantine({
+          reason: "Canary Decoy Exfiltration Probe Tripped (rec_canary_999 / CWE-200)",
+          threatLevel: "CRITICAL",
+          actor: "Alice Walker (Simulated Attacker Account)",
+          evidenceChecksum: res.capturedEvidence?.evidenceChecksum,
+        });
+      }
     } catch (err) {
       alert(`Exploit execution failed: ${err.message}`);
     } finally {
@@ -118,10 +137,39 @@ export default function SecurityLabView() {
     }
   }
 
-  function handleExportSarif() {
+  async function handleExportSignedSarif() {
     if (!activeScanRun) return;
-    const sarif = buildSarifDocument(activeScanRun);
-    downloadJsonFile(`fairenrol-scan-${activeScanRun.id}.sarif`, sarif);
+    const signed = await buildSignedSarifDocument(activeScanRun);
+    setSignedSarifDoc(signed);
+    downloadJsonFile(`fairenrol-scan-${activeScanRun.id}.sarif`, signed);
+  }
+
+  async function handleVerifySarifAttestation() {
+    if (!activeScanRun) return;
+    setIsVerifyingSarif(true);
+    try {
+      const docToVerify = signedSarifDoc || (await buildSignedSarifDocument(activeScanRun));
+      if (!signedSarifDoc) setSignedSarifDoc(docToVerify);
+      const res = await verifySarifDocument(docToVerify);
+      setSarifVerificationResult(res);
+    } finally {
+      setIsVerifyingSarif(false);
+    }
+  }
+
+  async function handleSimulateSarifTamper() {
+    if (!activeScanRun) return;
+    const baseDoc = signedSarifDoc || (await buildSignedSarifDocument(activeScanRun));
+    if (!signedSarifDoc) setSignedSarifDoc(baseDoc);
+
+    const tampered = JSON.parse(JSON.stringify(baseDoc));
+    if (tampered.runs?.[0]?.results?.[0]) {
+      // Malicious attacker attempts to conceal high-severity finding
+      tampered.runs[0].results[0].level = "note";
+      tampered.runs[0].results[0].message.text = "[NOTE] Suppressed finding";
+    }
+    const res = await verifySarifDocument(tampered);
+    setSarifVerificationResult(res);
   }
 
   function handleExportFindingsJson() {
@@ -241,9 +289,9 @@ export default function SecurityLabView() {
               <p className="card-subtitle">Ground Truth Evaluation against known target vulnerabilities.</p>
             </div>
             {activeScanRun && (
-              <div className="report-export-buttons">
-                <button className="button small outline" onClick={handleExportSarif} title="Download OASIS SARIF v2.1.0">
-                  Export SARIF (.sarif)
+              <div className="report-export-buttons" style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                <button className="button small primary" onClick={handleExportSignedSarif} title="Download OASIS SARIF v2.1.0 with NIST ECDSA P-256 Attestation">
+                  🔐 Export Signed SARIF (.sarif)
                 </button>
                 <button className="button small outline" onClick={handleExportFindingsJson}>
                   JSON Report
@@ -297,6 +345,110 @@ export default function SecurityLabView() {
                     </div>
                   </div>
                 ))}
+              </div>
+
+              {/* Cryptographic SARIF Attestation Box */}
+              <div
+                className="sarif-attestation-card"
+                style={{
+                  marginTop: "20px",
+                  background: "#f8fafc",
+                  border: "1px solid #cbd5e1",
+                  borderRadius: "8px",
+                  padding: "14px",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginBottom: "8px",
+                  }}
+                >
+                  <strong style={{ fontSize: "13px", color: "#0f172a" }}>
+                    📜 Verifiable Cryptographic SARIF Attestation (NIST ECDSA P-256)
+                  </strong>
+                  <span
+                    className="tag-crypto"
+                    style={{ background: "#ecfdf5", color: "#065f46" }}
+                  >
+                    ECDSA-P256-SHA256
+                  </span>
+                </div>
+                <p
+                  style={{
+                    fontSize: "12px",
+                    color: "#64748b",
+                    margin: "0 0 10px 0",
+                  }}
+                >
+                  Binds scan findings and precision/recall metrics to the Control Plane's digital notary. Any manual edit to vulnerability results will invalidate the signature.
+                </p>
+
+                <div
+                  style={{
+                    display: "flex",
+                    gap: "8px",
+                    flexWrap: "wrap",
+                    marginBottom: "10px",
+                  }}
+                >
+                  <button
+                    className="button small primary"
+                    onClick={handleVerifySarifAttestation}
+                    disabled={isVerifyingSarif}
+                  >
+                    {isVerifyingSarif ? "Verifying ECDSA Signature…" : "🔍 Verify SARIF Attestation"}
+                  </button>
+                  <button
+                    className="button small outline danger-outline"
+                    onClick={handleSimulateSarifTamper}
+                    disabled={isVerifyingSarif}
+                    title="Simulates tampering with a finding severity to demonstrate detection"
+                  >
+                    ⚡ Simulate SARIF Tamper Attack (CWE-354)
+                  </button>
+                </div>
+
+                {sarifVerificationResult && (
+                  <div
+                    className={`notice ${
+                      sarifVerificationResult.valid
+                        ? "crypto-success"
+                        : "crypto-denied"
+                    }`}
+                    role="alert"
+                    style={{ margin: 0, padding: "10px 14px" }}
+                  >
+                    {sarifVerificationResult.valid ? (
+                      <div>
+                        <strong>✓ SARIF Attestation Cryptographically Valid & Immutable</strong>
+                        <div style={{ fontSize: "11px", marginTop: "4px" }}>
+                          <span>
+                            Signer: <strong>{sarifVerificationResult.signer}</strong>
+                          </span>{" "}
+                          ·{" "}
+                          <span>
+                            Thumbprint: <code>{sarifVerificationResult.signerThumbprint}</code>
+                          </span>{" "}
+                          ·{" "}
+                          <span>
+                            Canonical SHA-256:{" "}
+                            <code>{sarifVerificationResult.canonicalSha256?.slice(0, 16)}…</code>
+                          </span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div>
+                        <strong>⛔ SARIF Attestation Signature Rejected (CWE-354 / CWE-347)</strong>
+                        <p style={{ margin: "4px 0 0 0", fontSize: "12px" }}>
+                          {sarifVerificationResult.error}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           ) : (

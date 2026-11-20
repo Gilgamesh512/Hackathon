@@ -2849,6 +2849,53 @@ footer {
   background: #fff5f5;
 }
 
+/* TideCloak Adaptive Active Defense Quarantine Banner */
+.active-defense-quarantine-banner {
+  background: linear-gradient(135deg, #7f1d1d, #991b1b);
+  color: #fff;
+  padding: 10px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  box-shadow: 0 4px 12px rgba(153, 27, 27, 0.25);
+  border-bottom: 2px solid #ef4444;
+  animation: bannerPulse 2s infinite ease-in-out;
+  z-index: 100;
+}
+
+@keyframes bannerPulse {
+  0%, 100% { background: linear-gradient(135deg, #7f1d1d, #991b1b); }
+  50% { background: linear-gradient(135deg, #991b1b, #b91c1c); }
+}
+
+.quarantine-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.quarantine-badge {
+  background: #fef2f2;
+  color: #991b1b;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 4px 8px;
+  border-radius: 4px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.quarantine-msg {
+  font-size: 13px;
+  color: #fecaca;
+}
+
+.quarantine-msg strong {
+  color: #fff;
+}
+
 /* Approver Signatures */
 .vote-badge-item {
   display: flex;

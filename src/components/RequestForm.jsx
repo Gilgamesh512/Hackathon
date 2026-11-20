@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { encryptConfidentialEvidence } from "../services/crypto";
+import { encryptConfidentialEvidence, encryptConfidentialEvidenceWithShamir } from "../services/crypto";
 import { APPROVER_SECRET_KEY } from "../services/tidecloak";
 
 export default function RequestForm({
@@ -50,9 +50,8 @@ export default function RequestForm({
 
     let encryptedPayload = null;
     if (includeEncryptedEvidence && confidentialEvidence.trim()) {
-      encryptedPayload = await encryptConfidentialEvidence(
+      encryptedPayload = await encryptConfidentialEvidenceWithShamir(
         confidentialEvidence.trim(),
-        APPROVER_SECRET_KEY,
         aadMetadata
       );
     }

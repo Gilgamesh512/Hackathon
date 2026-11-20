@@ -2,7 +2,7 @@
 // Bridges Vite React UI with Lab Manager Control Plane (Port 4000)
 // Includes zero-failure simulation fallback if backend server is not active.
 
-import { computeAuditHash } from "./crypto";
+import { computeAuditHash, signSarifDocument, verifySarifAttestation } from "./crypto.js";
 
 export const CATALOG_TARGETS = [
   {
@@ -397,6 +397,22 @@ export function buildSarifDocument(testRun) {
       },
     ],
   };
+}
+
+/**
+ * Generates an OASIS SARIF v2.1.0 document cryptographically signed with NIST ECDSA P-256.
+ * Binds scan metrics and vulnerability findings to the Control Plane's digital notary.
+ */
+export async function buildSignedSarifDocument(testRun) {
+  const unsignedDoc = buildSarifDocument(testRun);
+  return signSarifDocument(unsignedDoc);
+}
+
+/**
+ * Validates a signed SARIF v2.1.0 document against its ECDSA P-256 attestation header.
+ */
+export async function verifySarifDocument(sarifDoc) {
+  return verifySarifAttestation(sarifDoc);
 }
 
 /**

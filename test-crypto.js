@@ -12,6 +12,12 @@ import {
   resetApproverKeyToDefault,
   generateAnchorNotarizationReceipt,
   verifyAnchorNotarizationReceipt,
+  splitSecretShamir,
+  reconstructSecretShamir,
+  encryptConfidentialEvidenceWithShamir,
+  decryptConfidentialEvidenceWithShamir,
+  signSarifDocument,
+  verifySarifAttestation,
 } from "./src/services/crypto.js";
 
 async function runTests() {
@@ -172,7 +178,75 @@ async function runTests() {
   assert.equal(tamperedReceiptVerify.valid, false, "Receipt must reject mismatching head hash");
   console.log("✓ External Checkpoint Anchor Notarization Receipt generated and mathematically verified against ledger head");
 
-  console.log("\nALL CRYPTOGRAPHIC TESTS PASSED (12/12)!");
+  // 13. Shamir's Secret Sharing (2-of-3 Threshold Cryptography)
+  const sampleNote = "CONFIDENTIAL: Student S04 requires ground-floor disability accommodation.";
+  const aad = { studentId: "s04", courseId: "comp3100" };
+  const shamirEncrypted = await encryptConfidentialEvidenceWithShamir(sampleNote, aad);
+
+  assert.equal(shamirEncrypted.shamirShares.length, 3, "Must generate exactly 3 Shamir shares");
+  assert.equal(shamirEncrypted.algorithm, "AES-GCM-256-SSS-2OF3");
+
+  const [share1, share2, share3] = shamirEncrypted.shamirShares;
+
+  // 13.1 Threshold failure: 1 share alone cannot decrypt
+  const singleShareDecrypt = await decryptConfidentialEvidenceWithShamir(shamirEncrypted, [share1], aad);
+  assert.equal(singleShareDecrypt.success, false, "1 share must fail quorum threshold");
+  console.log("✓ Shamir Threshold Invariant: 1 share alone rejected (Threshold Unmet)");
+
+  // 13.2 Quorum Reconstruction: Pair (1, 2)
+  const pair12Decrypt = await decryptConfidentialEvidenceWithShamir(shamirEncrypted, [share1, share2], aad);
+  assert.equal(pair12Decrypt.success, true, "Pair (1,2) must reconstruct key and decrypt");
+  assert.equal(pair12Decrypt.plaintext, sampleNote);
+  console.log("✓ Shamir Quorum Reconstructed for Dr. Okafor + Sam Williams (Shares 1+2)");
+
+  // 13.3 Quorum Reconstruction: Pair (2, 3)
+  const pair23Decrypt = await decryptConfidentialEvidenceWithShamir(shamirEncrypted, [share2, share3], aad);
+  assert.equal(pair23Decrypt.success, true, "Pair (2,3) must reconstruct key and decrypt");
+  assert.equal(pair23Decrypt.plaintext, sampleNote);
+  console.log("✓ Shamir Quorum Reconstructed for Sam Williams + Alex Morgan (Shares 2+3)");
+
+  // 13.4 Quorum Reconstruction: Pair (1, 3)
+  const pair13Decrypt = await decryptConfidentialEvidenceWithShamir(shamirEncrypted, [share1, share3], aad);
+  assert.equal(pair13Decrypt.success, true, "Pair (1,3) must reconstruct key and decrypt");
+  assert.equal(pair13Decrypt.plaintext, sampleNote);
+  console.log("✓ Shamir Quorum Reconstructed for Dr. Okafor + Alex Morgan (Shares 1+3)");
+
+  // 13.5 Tampered Share detected by AES-GCM Authentication Tag mismatch
+  const corruptedShare2 = { ...share2, yHex: share2.yHex.slice(0, -4) + "ffff" };
+  const corruptDecrypt = await decryptConfidentialEvidenceWithShamir(shamirEncrypted, [share1, corruptedShare2], aad);
+  assert.equal(corruptDecrypt.success, false, "Tampered share must fail AES-GCM tag verification");
+  console.log("✓ Tampered Shamir share caught by AES-GCM Authentication Tag mismatch");
+
+  // 14. Verifiable Cryptographic SARIF Attestation (NIST ECDSA P-256)
+  const mockSarif = {
+    $schema: "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+    version: "2.1.0",
+    runs: [
+      {
+        tool: { driver: { name: "FairEnrol Security Lab Engine", version: "1.0.0" } },
+        results: [
+          { ruleId: "BOLA-01", level: "error", message: { text: "IDOR on sensitive student records" } },
+        ],
+      },
+    ],
+  };
+
+  const signedSarif = await signSarifDocument(mockSarif);
+  assert.ok(signedSarif.attestation, "Signed SARIF must contain attestation header");
+  assert.equal(signedSarif.attestation.algorithm, "ECDSA-P256-SHA256");
+
+  const sarifVerify = await verifySarifAttestation(signedSarif);
+  assert.equal(sarifVerify.valid, true, "Valid SARIF attestation must verify mathematically");
+  console.log("✓ Cryptographic SARIF Attestation verified (Thumbprint:", sarifVerify.signerThumbprint + ")");
+
+  // 14.1 Tamper Detection on SARIF report (e.g. attacker changes 'error' level to 'note')
+  const tamperedSarif = JSON.parse(JSON.stringify(signedSarif));
+  tamperedSarif.runs[0].results[0].level = "note"; // Malicious alteration
+  const tamperedSarifVerify = await verifySarifAttestation(tamperedSarif);
+  assert.equal(tamperedSarifVerify.valid, false, "Tampered SARIF report must be rejected (CWE-354)");
+  console.log("✓ Malicious SARIF modification caught:", tamperedSarifVerify.error);
+
+  console.log("\nALL CRYPTOGRAPHIC TESTS PASSED (14/14)!");
 }
 
 runTests().catch((err) => {

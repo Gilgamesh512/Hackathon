@@ -13,9 +13,29 @@ export default function Header({
   onExportCertificate,
   onOpenVerifier,
   onOpenStress,
+  quarantineState,
+  onDismissQuarantine,
 }) {
   return (
-    <header className="topbar">
+    <>
+      {quarantineState?.isQuarantined && (
+        <div className="active-defense-quarantine-banner" role="alert">
+          <div className="quarantine-content">
+            <span className="quarantine-badge">🚨 TIDECLOAK ACTIVE DEFENSE INTERVENTION</span>
+            <span className="quarantine-msg">
+              <strong>Session Revoked:</strong> Credentials for <em>{quarantineState.actor}</em> isolated.
+              <strong> Threat:</strong> {quarantineState.reason}.
+              {quarantineState.evidenceChecksum && (
+                <span className="evidence-pill"> SHA-256: {quarantineState.evidenceChecksum.slice(0, 16)}…</span>
+              )}
+            </span>
+          </div>
+          <button className="button small primary" onClick={onDismissQuarantine}>
+            Acknowledge & Re-authenticate
+          </button>
+        </div>
+      )}
+      <header className="topbar">
       <a className="brand" href="#">
         <span className="brand-mark">F</span>
         <span>
@@ -122,5 +142,6 @@ export default function Header({
         )}
       </div>
     </header>
+  </>
   );
 }

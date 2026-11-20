@@ -617,6 +617,8 @@ export default function App() {
     refreshToken,
     hasRealmRole,
     checkServerAlive,
+    quarantineState,
+    dismissQuarantine,
   } = useKeycloak();
 
   useEffect(() => {
@@ -1055,6 +1057,8 @@ export default function App() {
         onExportCertificate={() =>
           exportAuditCertificate(state.audit, checkpointHash, state.courses)
         }
+        quarantineState={quarantineState}
+        onDismissQuarantine={dismissQuarantine}
       />
 
       <section className="hero">

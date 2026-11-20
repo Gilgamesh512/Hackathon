@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, useMemo } from "react";
+import { createContext, useContext, useEffect, useState, useMemo, useCallback } from "react";
 import {
   keycloak,
   getOrInitKeycloak,
@@ -8,6 +8,7 @@ import {
   logoutFromKeycloak,
   checkKeycloakServerAlive,
 } from "../services/keycloak";
+import { broadcastCrossTab, subscribeCrossTab } from "../services/crossTabSync";
 
 const KeycloakContext = createContext(null);
 
@@ -17,6 +18,62 @@ export function KeycloakProvider({ children }) {
   const [user, setUser] = useState(null);
   const [initError, setInitError] = useState(null);
   const [tokenSnapshot, setTokenSnapshot] = useState(null);
+
+  // TideCloak Adaptive Incident Response & Session Quarantine State
+  const [quarantineState, setQuarantineState] = useState({
+    isQuarantined: false,
+    reason: null,
+    threatLevel: null,
+    actor: null,
+    timestamp: null,
+    evidenceChecksum: null,
+  });
+
+  const triggerQuarantine = useCallback(
+    ({ reason, threatLevel, actor, evidenceChecksum }) => {
+      const quarantinedActor = actor || user?.name || user?.username || "Active Session";
+      const incidentData = {
+        isQuarantined: true,
+        reason: reason || "Canary Decoy Exfiltration Trap Sprung (rec_canary_999)",
+        threatLevel: threatLevel || "CRITICAL",
+        actor: quarantinedActor,
+        timestamp: new Date().toISOString(),
+        evidenceChecksum: evidenceChecksum || null,
+      };
+      setQuarantineState(incidentData);
+
+      // Invalidate active session immediately to block lateral movement
+      setAuthenticated(false);
+      setTokenSnapshot(null);
+
+      // Broadcast across all open browser windows/tabs
+      broadcastCrossTab("TIDECLOAK_QUARANTINE_TRIGGERED", incidentData);
+    },
+    [user]
+  );
+
+  const dismissQuarantine = useCallback(() => {
+    setQuarantineState({
+      isQuarantined: false,
+      reason: null,
+      threatLevel: null,
+      actor: null,
+      timestamp: null,
+      evidenceChecksum: null,
+    });
+  }, []);
+
+  // Listen for cross-tab quarantine events
+  useEffect(() => {
+    const unsubscribe = subscribeCrossTab((msg) => {
+      if (msg.type === "TIDECLOAK_QUARANTINE_TRIGGERED" && msg.payload) {
+        setQuarantineState(msg.payload);
+        setAuthenticated(false);
+        setTokenSnapshot(null);
+      }
+    });
+    return unsubscribe;
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -111,8 +168,20 @@ export function KeycloakProvider({ children }) {
       refreshToken: () => updateKeycloakToken(10),
       hasRealmRole,
       checkServerAlive: checkKeycloakServerAlive,
+      quarantineState,
+      triggerQuarantine,
+      dismissQuarantine,
     }),
-    [isInitializing, authenticated, user, tokenSnapshot, initError]
+    [
+      isInitializing,
+      authenticated,
+      user,
+      tokenSnapshot,
+      initError,
+      quarantineState,
+      triggerQuarantine,
+      dismissQuarantine,
+    ]
   );
 
   return (

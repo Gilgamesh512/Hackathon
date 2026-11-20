@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import { TargetRegistry } from "../../src/lab/registry.js";
 import { TargetLifecycleManager } from "../../src/lab/lifecycle.js";
 import { TestEngine } from "../../src/lab/testEngine.js";
+import { buildSignedSarifDocument, verifySarifDocument } from "../../src/services/labClient.js";
 
 async function runLabTests() {
   console.log("==================================================================");
@@ -204,6 +205,25 @@ async function runLabTests() {
 
     // Clean up running instance
     await lifecycle.stopTarget("custom-api-vault");
+
+    // TEST 9: Cryptographically Signed SARIF Document (NIST ECDSA P-256 Attestation)
+    testCount++;
+    console.log(`Test ${testCount}: Cryptographically Signed SARIF v2.1.0 Document & Attestation Verification`);
+    const signedSarif = await buildSignedSarifDocument(mockRun);
+    assert.ok(signedSarif.attestation, "Document must include attestation");
+    assert.equal(signedSarif.attestation.algorithm, "ECDSA-P256-SHA256");
+
+    const verificationResult = await verifySarifDocument(signedSarif);
+    assert.equal(verificationResult.valid, true, "Signature verification must succeed");
+    assert.ok(verificationResult.signerThumbprint, "Must expose signer thumbprint");
+    console.log(`  ✓ Cryptographically signed SARIF validated with ECDSA P-256 (Thumbprint: ${verificationResult.signerThumbprint})`);
+
+    // Tamper detection test
+    const tamperedSarif = JSON.parse(JSON.stringify(signedSarif));
+    tamperedSarif.runs[0].results[0].message.text = "FORGED FINDING";
+    const tamperedResult = await verifySarifDocument(tamperedSarif);
+    assert.equal(tamperedResult.valid, false, "Tampered SARIF must fail verification");
+    console.log(`  ✓ Tampered SARIF detection verified (CWE-354): ${tamperedResult.error}\n`);
   }
 
   console.log("==================================================================");
