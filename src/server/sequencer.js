@@ -486,16 +486,32 @@ export class FairEnrolSequencer {
       // 5. Evaluate Quorum (2-of-3)
       if (existingApprovals.length >= 2) {
         request.status = "approved";
-        // Apply action to course
-        const targetCourse = this.courses.find((c) => c.id === request.courseId);
-        if (targetCourse) {
-          if (request.kind === "force") {
-            targetCourse.enrolled = targetCourse.enrolled.filter((id) => id !== request.studentId);
-            targetCourse.waitlist = targetCourse.waitlist.filter((id) => id !== request.studentId);
-            targetCourse.enrolled.push(request.studentId);
-          } else if (request.kind === "jump") {
-            targetCourse.waitlist = targetCourse.waitlist.filter((id) => id !== request.studentId);
-            targetCourse.waitlist.unshift(request.studentId);
+        let autoPromotedFromRemove = null;
+
+        if (request.kind === "panel" && request.candidate && request.replaceMember) {
+          this.panel = [
+            ...this.panel.filter((m) => m.id !== request.replaceMember.id),
+            request.candidate,
+          ];
+        } else {
+          const targetCourse = this.courses.find((c) => c.id === request.courseId);
+          if (targetCourse) {
+            if (request.kind === "force") {
+              targetCourse.enrolled = targetCourse.enrolled.filter((id) => id !== request.studentId);
+              targetCourse.waitlist = targetCourse.waitlist.filter((id) => id !== request.studentId);
+              targetCourse.enrolled.push(request.studentId);
+            } else if (request.kind === "jump") {
+              targetCourse.waitlist = targetCourse.waitlist.filter((id) => id !== request.studentId);
+              targetCourse.waitlist.unshift(request.studentId);
+            } else if (request.kind === "remove") {
+              const wasEnrolled = targetCourse.enrolled.includes(request.studentId);
+              targetCourse.enrolled = targetCourse.enrolled.filter((id) => id !== request.studentId);
+              targetCourse.waitlist = targetCourse.waitlist.filter((id) => id !== request.studentId);
+              if (wasEnrolled && targetCourse.waitlist.length > 0 && targetCourse.enrolled.length < targetCourse.capacity) {
+                autoPromotedFromRemove = targetCourse.waitlist.shift();
+                targetCourse.enrolled.push(autoPromotedFromRemove);
+              }
+            }
           }
         }
 
@@ -507,6 +523,7 @@ export class FairEnrolSequencer {
             kind: request.kind,
             studentId: request.studentId,
             approvers: existingApprovals.map((a) => a.name),
+            ...(autoPromotedFromRemove ? { autoPromotedStudentId: autoPromotedFromRemove } : {}),
           },
           `Exception authorized by ${existingApprovals.map((m) => m.name).join(" & ")}. Queue updated accordingly.`
         );
@@ -556,7 +573,26 @@ export class FairEnrolSequencer {
   }
 
   /**
-   * Restores clean ledger from trusted anchor
+   * Restores clean audit ledger from trusted Checkpoint Anchor backup without wiping enrolments
+   */
+  async restoreAuditOnly() {
+    return this._atomicDispatch(async () => {
+      if (Array.isArray(this.cleanBackup) && this.cleanBackup.length > 0) {
+        this.audit = JSON.parse(JSON.stringify(this.cleanBackup));
+        this.checkpointAnchor = this.audit[0]?.hash || null;
+        this.isTampered = false;
+        this._savePersistedState();
+        this.broadcastUpdate("LEDGER_RESTORED");
+        return { success: true, isTampered: false, message: "Audit ledger restored from Checkpoint Anchor." };
+      }
+      this.resetState(true);
+      this.broadcastUpdate("LEDGER_RESTORED");
+      return { success: true, isTampered: false, message: "State and ledger restored to clean Genesis." };
+    });
+  }
+
+  /**
+   * Restores clean ledger and courses from trusted Genesis seed
    */
   async restoreCleanLedger() {
     return this._atomicDispatch(async () => {

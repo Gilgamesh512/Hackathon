@@ -176,16 +176,17 @@ export class TestEngine {
   }
 
   async _scanGenericBaseline(run, endpoint) {
-    // Baseline passive check
+    // Baseline reachability check (for external containerized targets when DAST plugins are not attached)
     const finding = {
       id: `fnd_${run.id}_baseline`,
       runId: run.id,
       targetId: run.targetId,
       testKey: "BASELINE-01",
-      title: "Target Service Responsive on Isolated Lab Network",
+      title: "Target Service Responsive on Isolated Lab Network (Baseline Check)",
       severity: "INFO",
-      confidence: "CONFIRMED",
-      description: `Target instance verified reachable at ${endpoint}. Detailed scanner profile ready.`,
+      confidence: "SIMULATED_BASELINE",
+      simulated: true,
+      description: `Target instance verified reachable at ${endpoint}. Full active DAST profile requires running the target's Docker Compose stack.`,
       status: "INFORMATIONAL",
     };
     run.findings.push(finding);
@@ -198,8 +199,17 @@ export class TestEngine {
    */
   computeMetrics(targetId, detectedFindings) {
     const target = this.registry.getTarget(targetId);
-    // Ground truth expected findings count (e.g. BOLA-01, MASS-ASSIGN-01 for custom target)
-    const expectedKeys = ["BOLA-01", "MASS-ASSIGN-01"];
+    let expectedKeys;
+    if (targetId === "custom-api-vault") {
+      expectedKeys = ["BOLA-01", "MASS-ASSIGN-01"];
+    } else if (Array.isArray(target?.testing?.expectedFindings) && target.testing.expectedFindings.length > 0) {
+      expectedKeys = target.testing.expectedFindings.map((item, idx) => {
+        const prefix = String(item).split(":")[0].trim();
+        return prefix || `EXPECTED-${idx + 1}`;
+      });
+    } else {
+      expectedKeys = ["BASELINE-01"];
+    }
     const detectedKeys = detectedFindings.map((f) => f.testKey).filter(Boolean);
 
     let tp = 0;

@@ -3,11 +3,12 @@
 // and FairEnrol Atomic State Machine with Server-Sent Events (SSE).
 
 import http from "node:http";
+import crypto from "node:crypto";
 import { TargetRegistry } from "./registry.js";
 import { TargetLifecycleManager } from "./lifecycle.js";
 import { TestEngine } from "./testEngine.js";
 import { FairEnrolSequencer } from "../server/sequencer.js";
-import { APPROVER_KEYPAIRS } from "../services/crypto.js";
+import { APPROVER_KEYPAIRS, signSarifDocument } from "../services/crypto.js";
 
 export function createLabManagerServer(options = {}) {
   const registry = new TargetRegistry();
@@ -16,6 +17,120 @@ export function createLabManagerServer(options = {}) {
   const lifecycle = new TargetLifecycleManager(registry);
   const testEngine = new TestEngine(registry, lifecycle);
   const sequencer = new FairEnrolSequencer(options);
+
+  const strictAuth = Boolean(options.strictAuth || process.env.FAIRE_STRICT_AUTH === "true");
+  const oidcBaseUrl = (options.oidcUrl || process.env.VITE_OIDC_URL || "http://localhost:8081").replace(/\/$/, "");
+  const oidcRealm = options.oidcRealm || process.env.VITE_OIDC_REALM || "fairenrol";
+  const jwksUri = `${oidcBaseUrl}/realms/${oidcRealm}/protocol/openid-connect/certs`;
+
+  // Short-lived JWKS cache for cryptographic JWT verification when TideCloak is online
+  let jwksCache = { keys: [], fetchedAt: 0 };
+  async function getJwksKeys() {
+    const now = Date.now();
+    if (jwksCache.keys.length > 0 && now - jwksCache.fetchedAt < 60000) {
+      return jwksCache.keys;
+    }
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 800);
+      const resp = await fetch(jwksUri, { signal: controller.signal });
+      clearTimeout(timer);
+      if (resp.ok) {
+        const data = await resp.json();
+        if (Array.isArray(data.keys)) {
+          jwksCache = { keys: data.keys, fetchedAt: now };
+          return jwksCache.keys;
+        }
+      }
+    } catch {
+      // TideCloak server offline
+    }
+    return [];
+  }
+
+  function decodeJwtParts(token) {
+    try {
+      const parts = token.split(".");
+      if (parts.length !== 3) return null;
+      const header = JSON.parse(Buffer.from(parts[0].replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf-8"));
+      const claims = JSON.parse(Buffer.from(parts[1].replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf-8"));
+      return { header, claims, signingInput: `${parts[0]}.${parts[1]}`, signatureB64Url: parts[2] };
+    } catch {
+      return null;
+    }
+  }
+
+  async function verifyJwtWithJwks(decoded) {
+    const keys = await getJwksKeys();
+    if (!keys.length) {
+      return { jwksReachable: false, signatureValid: false };
+    }
+    const matchingKey = keys.find((k) => !decoded.header.kid || k.kid === decoded.header.kid) || keys[0];
+    if (!matchingKey) {
+      return { jwksReachable: true, signatureValid: false };
+    }
+    try {
+      const publicKey = crypto.createPublicKey({ key: matchingKey, format: "jwk" });
+      const alg = decoded.header.alg || "RS256";
+      const hashAlg = alg.endsWith("512") ? "RSA-SHA512" : alg.endsWith("384") ? "RSA-SHA384" : "RSA-SHA256";
+      const sigBuffer = Buffer.from(decoded.signatureB64Url.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+      const valid = crypto.verify(hashAlg, Buffer.from(decoded.signingInput, "utf-8"), publicKey, sigBuffer);
+      return { jwksReachable: true, signatureValid: valid };
+    } catch {
+      return { jwksReachable: true, signatureValid: false };
+    }
+  }
+
+  async function extractAuthContext(req) {
+    const authHeader = req.headers["authorization"] || "";
+    if (!authHeader.startsWith("Bearer ")) {
+      return {
+        hasToken: false,
+        valid: false,
+        isDemo: !strictAuth,
+        roles: [],
+        username: null,
+      };
+    }
+
+    const token = authHeader.slice(7).trim();
+    const decoded = decodeJwtParts(token);
+    if (!decoded) {
+      return {
+        hasToken: true,
+        valid: false,
+        malformed: true,
+        roles: [],
+        username: null,
+      };
+    }
+
+    const { claims } = decoded;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const isExpired = Boolean(claims.exp && claims.exp < nowSec);
+    const jwksCheck = await verifyJwtWithJwks(decoded);
+
+    // In strictAuth mode, cryptographic JWKS signature verification is mandatory.
+    // In hybrid/demo mode, if TideCloak JWKS is online, forged signatures are still rejected!
+    const signatureRejected = jwksCheck.jwksReachable
+      ? !jwksCheck.signatureValid
+      : strictAuth;
+
+    const roles = Array.isArray(claims.realm_access?.roles) ? claims.realm_access.roles : [];
+    return {
+      hasToken: true,
+      valid: !isExpired && !signatureRejected,
+      expired: isExpired,
+      signatureRejected,
+      verifiedByJwks: jwksCheck.jwksReachable && jwksCheck.signatureValid,
+      claims,
+      username: claims.preferred_username || claims.sub,
+      roles,
+      isRegistrar: roles.includes("registrar") || roles.includes("admin"),
+      isApprover: roles.includes("approver"),
+      isStudent: roles.includes("student"),
+    };
+  }
 
   // In-memory sliding-window rate limiter
   const rateLimitMap = new Map();
@@ -48,55 +163,10 @@ export function createLabManagerServer(options = {}) {
     return { allowed: true, remaining: MAX_REQUESTS_PER_WINDOW - entry.count };
   }
 
-  // Lightweight JWT Token & Role Claims Extractor
-  function parseJwtClaims(token) {
-    try {
-      const parts = token.split(".");
-      if (parts.length !== 3) return null;
-      const base64Url = parts[1];
-      const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
-      const jsonPayload = Buffer.from(base64, "base64").toString("utf-8");
-      return JSON.parse(jsonPayload);
-    } catch {
-      return null;
-    }
-  }
-
-  function extractAuthContext(req) {
-    const authHeader = req.headers["authorization"] || "";
-    if (authHeader.startsWith("Bearer ")) {
-      const token = authHeader.slice(7).trim();
-      const claims = parseJwtClaims(token);
-      if (claims) {
-        const nowSec = Math.floor(Date.now() / 1000);
-        const isExpired = claims.exp && claims.exp < nowSec;
-        const roles = claims.realm_access?.roles || [];
-        return {
-          hasToken: true,
-          valid: !isExpired,
-          expired: isExpired,
-          claims,
-          username: claims.preferred_username || claims.sub,
-          roles,
-          isRegistrar: roles.includes("registrar") || roles.includes("admin"),
-          isApprover: roles.includes("approver"),
-          isStudent: roles.includes("student"),
-        };
-      }
-    }
-    return {
-      hasToken: false,
-      valid: false,
-      isDemo: true,
-      roles: [],
-      username: null,
-    };
-  }
-
   const server = http.createServer(async (req, res) => {
     // CORS headers
     res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-FairEnrol-Demo");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
 
     if (req.method === "OPTIONS") {
@@ -151,6 +221,7 @@ export function createLabManagerServer(options = {}) {
         return sendJson(200, {
           status: "healthy",
           component: "Lab Manager Control Plane",
+          authMode: strictAuth ? "STRICT_JWKS_REQUIRED" : "HYBRID_JWKS_WITH_DEMO_FALLBACK",
           registeredTargets: registry.getAllTargets().length,
           timestamp: new Date().toISOString(),
         });
@@ -207,8 +278,24 @@ export function createLabManagerServer(options = {}) {
         if (!body.targetId) {
           return sendJson(400, { error: "targetId is required to start a test run" });
         }
+        if (body.targetId === "custom-api-vault") {
+          const st = await lifecycle.getTargetStatus("custom-api-vault");
+          if (st.status !== "running") {
+            await lifecycle.startTarget("custom-api-vault");
+          }
+        }
         const run = await testEngine.runSecurityScan(body.targetId, body.profile || "automated-api");
         return sendJson(201, { message: "Security scan completed", run });
+      }
+
+      // 7b. POST /api/sarif/sign - Server-side Control Plane SARIF Attestation
+      if (pathname === "/api/sarif/sign" && req.method === "POST") {
+        const body = await readBody();
+        if (!body || !body.sarif) {
+          return sendJson(400, { error: "sarif payload is required" });
+        }
+        const signed = await signSarifDocument(body.sarif);
+        return sendJson(200, { signedSarif: signed });
       }
 
       // 8. GET /api/test-runs/:id
@@ -312,12 +399,36 @@ export function createLabManagerServer(options = {}) {
         return sequencer.registerSseClient(req, res);
       }
 
+      // Helper to enforce auth policy consistently across /api/fairenrol/* mutating routes
+      function enforceAuth(auth, requiredRoles = null) {
+        if (strictAuth && !auth.hasToken) {
+          return { status: 401, error: "Authentication Required: Missing TideCloak Bearer token (strict mode)." };
+        }
+        if (auth.hasToken) {
+          if (auth.malformed) {
+            return { status: 401, error: "Malformed Bearer JWT token." };
+          }
+          if (auth.expired) {
+            return { status: 401, error: "TideCloak session expired. Please re-authenticate." };
+          }
+          if (auth.signatureRejected) {
+            return { status: 401, error: "Invalid JWT cryptographic signature rejected by TideCloak JWKS verifier." };
+          }
+          if (requiredRoles && !requiredRoles.some((r) => auth.roles.includes(r))) {
+            return {
+              status: 403,
+              error: `Access Denied: Requires '${requiredRoles.join("' or '")}' role in TideCloak token.`,
+            };
+          }
+        }
+        return null;
+      }
+
       // 16. POST /api/fairenrol/enrol - Atomic FIFO Enrolment Lock
       if (pathname === "/api/fairenrol/enrol" && req.method === "POST") {
-        const auth = extractAuthContext(req);
-        if (auth.hasToken && auth.expired) {
-          return sendJson(401, { success: false, error: "TideCloak session expired. Please re-authenticate." });
-        }
+        const auth = await extractAuthContext(req);
+        const authErr = enforceAuth(auth);
+        if (authErr) return sendJson(authErr.status, { success: false, error: authErr.error });
         const body = await readBody();
         try {
           if (auth.hasToken && auth.username) {
@@ -332,10 +443,9 @@ export function createLabManagerServer(options = {}) {
 
       // 17. POST /api/fairenrol/withdraw - Atomic Seat Release & FIFO Promotion
       if (pathname === "/api/fairenrol/withdraw" && req.method === "POST") {
-        const auth = extractAuthContext(req);
-        if (auth.hasToken && auth.expired) {
-          return sendJson(401, { success: false, error: "TideCloak session expired. Please re-authenticate." });
-        }
+        const auth = await extractAuthContext(req);
+        const authErr = enforceAuth(auth);
+        if (authErr) return sendJson(authErr.status, { success: false, error: authErr.error });
         const body = await readBody();
         try {
           if (auth.hasToken && auth.username) {
@@ -350,18 +460,9 @@ export function createLabManagerServer(options = {}) {
 
       // 18. POST /api/fairenrol/capacity - Authorized Quota Update & Auto-Promotion Sweep
       if (pathname === "/api/fairenrol/capacity" && req.method === "POST") {
-        const auth = extractAuthContext(req);
-        if (auth.hasToken) {
-          if (auth.expired) {
-            return sendJson(401, { success: false, error: "TideCloak session expired. Please re-authenticate." });
-          }
-          if (!auth.isRegistrar) {
-            return sendJson(403, {
-              success: false,
-              error: "Access Denied: Requires 'registrar' or 'admin' role in TideCloak token.",
-            });
-          }
-        }
+        const auth = await extractAuthContext(req);
+        const authErr = enforceAuth(auth, ["registrar", "admin"]);
+        if (authErr) return sendJson(authErr.status, { success: false, error: authErr.error });
         const body = await readBody();
         try {
           if (auth.hasToken && auth.username) {
@@ -376,10 +477,9 @@ export function createLabManagerServer(options = {}) {
 
       // 19. POST /api/fairenrol/requests - Submit Exception Proposal with E2EE
       if (pathname === "/api/fairenrol/requests" && req.method === "POST") {
-        const auth = extractAuthContext(req);
-        if (auth.hasToken && auth.expired) {
-          return sendJson(401, { success: false, error: "TideCloak session expired. Please re-authenticate." });
-        }
+        const auth = await extractAuthContext(req);
+        const authErr = enforceAuth(auth);
+        if (authErr) return sendJson(authErr.status, { success: false, error: authErr.error });
         const body = await readBody();
         try {
           const result = await sequencer.submitRequest(body);
@@ -391,18 +491,9 @@ export function createLabManagerServer(options = {}) {
 
       // 20. POST /api/fairenrol/vote - Approver Quorum Vote with Server-Side Asymmetric Verification
       if (pathname === "/api/fairenrol/vote" && req.method === "POST") {
-        const auth = extractAuthContext(req);
-        if (auth.hasToken) {
-          if (auth.expired) {
-            return sendJson(401, { success: false, error: "TideCloak session expired. Please re-authenticate." });
-          }
-          if (!auth.isApprover) {
-            return sendJson(403, {
-              success: false,
-              error: "Access Denied: Requires 'approver' role in TideCloak token.",
-            });
-          }
-        }
+        const auth = await extractAuthContext(req);
+        const authErr = enforceAuth(auth, ["approver"]);
+        if (authErr) return sendJson(authErr.status, { success: false, error: authErr.error });
         const body = await readBody();
         try {
           const result = await sequencer.vote(body);
@@ -414,13 +505,28 @@ export function createLabManagerServer(options = {}) {
 
       // 21. POST /api/fairenrol/tamper - Simulate Server Ledger Tampering
       if (pathname === "/api/fairenrol/tamper" && req.method === "POST") {
+        const auth = await extractAuthContext(req);
+        const authErr = enforceAuth(auth, ["registrar", "admin"]);
+        if (authErr) return sendJson(authErr.status, { success: false, error: authErr.error });
         const body = await readBody();
         const result = await sequencer.simulateTamper(body.mode || "single");
         return sendJson(200, result);
       }
 
+      // 21b. POST /api/fairenrol/restore - Restore Clean Audit Ledger from Anchor Backup
+      if (pathname === "/api/fairenrol/restore" && req.method === "POST") {
+        const auth = await extractAuthContext(req);
+        const authErr = enforceAuth(auth, ["registrar", "admin"]);
+        if (authErr) return sendJson(authErr.status, { success: false, error: authErr.error });
+        const result = await sequencer.restoreAuditOnly();
+        return sendJson(200, result);
+      }
+
       // 22. POST /api/fairenrol/reset - Restore Clean Seed Ledger State
       if (pathname === "/api/fairenrol/reset" && req.method === "POST") {
+        const auth = await extractAuthContext(req);
+        const authErr = enforceAuth(auth, ["registrar", "admin"]);
+        if (authErr) return sendJson(authErr.status, { success: false, error: authErr.error });
         await sequencer.restoreCleanLedger();
         return sendJson(200, { success: true, message: "Server state and ledger restored to clean Genesis." });
       }

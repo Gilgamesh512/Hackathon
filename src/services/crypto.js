@@ -501,6 +501,9 @@ export async function decryptConfidentialEvidenceWithShamir(encryptedPayload, pr
 
 // NIST P-256 Elliptic Curve Keypairs for Authorized Approvers
 // Provides non-repudiation and prevents cross-approver signature forgery (CWE-347).
+// NOTE: These deterministic keypairs are demo/test fixtures so offline evaluation and unit tests
+// are reproducible. For live browser sessions, use generateEphemeralApproverKeypair() (Web Crypto)
+// or Tide Foundation hardware/DKG custody in production.
 export const APPROVER_KEYPAIRS = {
   "approver-1": {
     name: "Dr. Amara Okafor",
@@ -714,6 +717,12 @@ export async function verifyApproverVoteSignature(voteEntry, optionalKeyOrPublic
 
     // 1. Asymmetric ECDSA P-256 Verification (Primary)
     if (algorithm === "ECDSA-P256-SHA256") {
+      if (voteEntry.signatureProof.keyId && voteEntry.signatureProof.keyId !== voteEntry.id) {
+        return {
+          valid: false,
+          error: `Approver identity mismatch (CWE-347): signature keyId '${voteEntry.signatureProof.keyId}' does not match voter '${voteEntry.id}'`,
+        };
+      }
       const registeredPub = DYNAMIC_APPROVER_KEYS[voteEntry.id]?.pub || APPROVER_KEYPAIRS[voteEntry.id]?.pub;
       const pubJwk =
         optionalKeyOrPublic?.kty === "EC"

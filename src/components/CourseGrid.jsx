@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { broadcastCrossTab } from "../services/crossTabSync";
 import { exportQueueIncidentSarif } from "../services/labClient";
+import { computeAuditHash } from "../services/crypto";
 
 export default function CourseGrid({
   courses,
@@ -16,7 +17,7 @@ export default function CourseGrid({
 }) {
   const [isSimulatingRace, setIsSimulatingRace] = useState(false);
   const [showVisualMap, setShowVisualMap] = useState(true);
-  const [honeypotAlert, setHoneypotAlert] = useState("");
+  const [honeypotAlert, setHoneypotAlert] = useState(null);
 
   const ownWaitlists = courses
     .map((course) => ({
@@ -35,13 +36,9 @@ export default function CourseGrid({
     setIsSimulatingRace(false);
   }
 
-  function handleTriggerHoneypotProbe(course) {
-    const alertMsg = `🚨 Honeypot Sensor Tripped: Unauthorized Queue Jump Attempt on ${course.code} (CWE-284 / BOLA) Blocked & Forensically Anchored!`;
-    setHoneypotAlert(alertMsg);
-    setTimeout(() => setHoneypotAlert(""), 6000);
-
-    // Broadcast live telemetry to Security Lab
-    broadcastCrossTab("EXPLOIT_TELEMETRY", {
+  async function handleTriggerHoneypotProbe(course) {
+    const timestamp = new Date().toISOString();
+    const probePayload = {
       attackType: "QUEUE_JUMP_BOLA_PROBE",
       cwe: "CWE-284",
       owasp: "API1:2023",
@@ -51,7 +48,23 @@ export default function CourseGrid({
       method: "POST",
       payloadSummary: `Direct seat theft attempt on ${course.code} bypassing FIFO waitlist`,
       indicator: "BLOCKED: Object-level authorization and strict FIFO sequence controller rejected bypass.",
-      evidenceChecksum: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      timestamp,
+    };
+    const evidenceChecksum = await computeAuditHash("HONEYPOT_PROBE_ROOT", probePayload);
+    const alertMsg = `🚨 Honeypot Sensor Tripped: Unauthorized Queue Jump Attempt on ${course.code} (CWE-284 / BOLA) Blocked & Forensically Anchored!`;
+
+    setHoneypotAlert({
+      message: alertMsg,
+      course,
+      hash: evidenceChecksum,
+      timestamp,
+    });
+    setTimeout(() => setHoneypotAlert(null), 6000);
+
+    // Broadcast live telemetry to Security Lab
+    broadcastCrossTab("EXPLOIT_TELEMETRY", {
+      ...probePayload,
+      evidenceChecksum,
     });
   }
 
@@ -100,26 +113,26 @@ export default function CourseGrid({
 
       {honeypotAlert && (
         <div className="notice honeypot-notice" role="alert" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span>{honeypotAlert}</span>
+          <span>{honeypotAlert.message}</span>
           <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
             <button
               className="button mini dark"
               style={{ whiteSpace: "nowrap" }}
               onClick={() =>
-                exportQueueIncidentSarif(auditHistory, courses[0], {
+                exportQueueIncidentSarif(auditHistory, honeypotAlert.course || courses[0], {
                   action: "QUEUE_JUMP_BOLA_PROBE",
                   actor: studentId,
-                  time: new Date().toISOString(),
-                  details: { courseId: courses[0]?.id, status: "BLOCKED" },
-                  reason: honeypotAlert,
-                  hash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  time: honeypotAlert.timestamp,
+                  details: { courseId: (honeypotAlert.course || courses[0])?.id, courseCode: (honeypotAlert.course || courses[0])?.code, status: "BLOCKED" },
+                  reason: honeypotAlert.message,
+                  hash: honeypotAlert.hash,
                 })
               }
               title="Download standard OASIS SARIF v2.1.0 report for this incident"
             >
               📥 Export Incident (.sarif)
             </button>
-            <button onClick={() => setHoneypotAlert("")}>×</button>
+            <button onClick={() => setHoneypotAlert(null)}>×</button>
           </div>
         </div>
       )}

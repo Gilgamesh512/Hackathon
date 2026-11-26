@@ -12,6 +12,28 @@ import { broadcastCrossTab, subscribeCrossTab } from "../services/crossTabSync";
 
 const KeycloakContext = createContext(null);
 
+const QUARANTINE_STORAGE_KEY = "fairenrol_quarantine_state";
+
+function loadInitialQuarantineState() {
+  const empty = {
+    isQuarantined: false,
+    reason: null,
+    threatLevel: null,
+    actor: null,
+    timestamp: null,
+    evidenceChecksum: null,
+  };
+  if (typeof window === "undefined") return empty;
+  try {
+    const raw = window.sessionStorage.getItem(QUARANTINE_STORAGE_KEY);
+    if (!raw) return empty;
+    const parsed = JSON.parse(raw);
+    return parsed?.isQuarantined ? parsed : empty;
+  } catch {
+    return empty;
+  }
+}
+
 export function KeycloakProvider({ children }) {
   const [isInitializing, setIsInitializing] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
@@ -20,14 +42,7 @@ export function KeycloakProvider({ children }) {
   const [tokenSnapshot, setTokenSnapshot] = useState(null);
 
   // TideCloak Adaptive Incident Response & Session Quarantine State
-  const [quarantineState, setQuarantineState] = useState({
-    isQuarantined: false,
-    reason: null,
-    threatLevel: null,
-    actor: null,
-    timestamp: null,
-    evidenceChecksum: null,
-  });
+  const [quarantineState, setQuarantineState] = useState(loadInitialQuarantineState);
 
   const triggerQuarantine = useCallback(
     ({ reason, threatLevel, actor, evidenceChecksum }) => {
@@ -41,10 +56,18 @@ export function KeycloakProvider({ children }) {
         evidenceChecksum: evidenceChecksum || null,
       };
       setQuarantineState(incidentData);
+      try {
+        window.sessionStorage.setItem(QUARANTINE_STORAGE_KEY, JSON.stringify(incidentData));
+      } catch {}
 
       // Invalidate active session immediately to block lateral movement
       setAuthenticated(false);
       setTokenSnapshot(null);
+      if (typeof keycloak.clearToken === "function") {
+        try {
+          keycloak.clearToken();
+        } catch {}
+      }
 
       // Broadcast across all open browser windows/tabs
       broadcastCrossTab("TIDECLOAK_QUARANTINE_TRIGGERED", incidentData);
@@ -53,6 +76,9 @@ export function KeycloakProvider({ children }) {
   );
 
   const dismissQuarantine = useCallback(() => {
+    try {
+      window.sessionStorage.removeItem(QUARANTINE_STORAGE_KEY);
+    } catch {}
     setQuarantineState({
       isQuarantined: false,
       reason: null,
@@ -68,6 +94,9 @@ export function KeycloakProvider({ children }) {
     const unsubscribe = subscribeCrossTab((msg) => {
       if (msg.type === "TIDECLOAK_QUARANTINE_TRIGGERED" && msg.payload) {
         setQuarantineState(msg.payload);
+        try {
+          window.sessionStorage.setItem(QUARANTINE_STORAGE_KEY, JSON.stringify(msg.payload));
+        } catch {}
         setAuthenticated(false);
         setTokenSnapshot(null);
       }

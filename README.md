@@ -56,11 +56,11 @@ A student athlete or registrar's contact asks to be forced into the course. In t
 
 ## 4. Why TideCloak Matters
 
-FairEnrol uses **TideCloak** to establish decentralized identity and eliminate single-point-of-failure authentication:
-- **Real OpenID Connect / Tide IAM Integration:** Uses `@tidecloak/react` (`TideCloakContextProvider`) and `keycloak-js` to manage authentication state, session lifecycles, and cryptographic token verification via Authorization Code Flow + PKCE (S256).
-- **Cryptographic Role Segregation:** Extracts verified identity claims (`preferred_username`, `email`, and `realm_access.roles`) to delineate Students, Registrars, and Panel Approvers.
-- **Decentralized Authorization vs. UI Hiding:** Security is not enforced by merely hiding buttons. Administrative actions require cryptographic authentication; unauthorized attempts to decrypt confidential evidence trigger mathematical authentication tag failures (`AES-GCM` rejection).
-- **Resilience & Graceful Offline Diagnostics:** If the local TideCloak dev container is offline, FairEnrol alerts the evaluator with setup instructions while maintaining interactive simulation workflows for judging.
+FairEnrol uses **TideCloak** (built on OpenID Connect / Keycloak) to establish decentralized identity and eliminate single-point-of-failure authentication:
+- **Real OpenID Connect / Tide IAM Integration:** Uses `keycloak-js` (`KeycloakProvider` in `src/contexts/KeycloakContext.jsx`, with `@tidecloak/react` SDK installed) to manage authentication state, session lifecycles, and cryptographic token verification via Authorization Code Flow + PKCE (S256).
+- **Cryptographic Role Segregation & Server JWKS Verification:** Extracts verified identity claims (`preferred_username`, `email`, and `realm_access.roles`) to delineate Students, Registrars, and Panel Approvers. The backend sequencer verifies JWT signatures against TideCloak's JWKS endpoint when TideCloak is reachable (and strictly requires verified Bearer tokens on all mutating routes when `FAIRE_STRICT_AUTH=true`).
+- **Decentralized Authorization vs. UI Hiding:** Security is not enforced by merely hiding buttons. Administrative actions require RBAC role claims on the server sequencer; unauthorized attempts to decrypt confidential evidence trigger mathematical authentication tag failures (`AES-GCM` rejection).
+- **Resilience & Graceful Offline Diagnostics:** If the local TideCloak dev container is offline, FairEnrol alerts the evaluator with setup instructions while maintaining interactive simulation workflows for judging (clearly labeled as Sandbox Demo Mode).
 
 ---
 
@@ -174,11 +174,11 @@ Copy-Item .env.example .env.local
 ```powershell
 npm.cmd run test:all
 ```
-*Executes all **39 automated tests** across four suites (`test-crypto.js`, `test-fairenrol.js`, `test/lab/test-lab-manager.js`, and `test/test-server-sequencer.js`), verifying:*
+*Executes all **44 automated tests** across four suites (`test-crypto.js` [14], `test-fairenrol.js` [15], `test/lab/test-lab-manager.js` [9], and `test/test-server-sequencer.js` [6]), verifying:*
 - *NIST ECDSA P-256 Asymmetric Digital Signatures & Non-Repudiation (Zero-Secret Public Verification, CWE-347)*
 - *Dynamic In-Browser Ephemeral Keypair Generation via Web Crypto API (Client-side Session Key Separation)*
 - *Verifiable Server-Side FIFO Sequencer with Atomic Microsecond Concurrency Mutex (CWE-362)*
-- *Server-Side TideCloak Bearer JWT Validation & Strict RBAC Role Enforcement (HTTP 401 / 403)*
+- *Server-Side TideCloak Bearer JWT Validation, JWKS Strict Mode (`FAIRE_STRICT_AUTH=true`) & RBAC Role Enforcement (HTTP 401 / 403)*
 - *Token-Bucket Rate Limiting (CWE-799 Anti-Flooding / Anti-DoS)*
 - *Disk-backed State Persistence Engine (`src/server/data/state.json`) with Genesis Recovery*
 - *External Checkpoint Anchor Notarization Receipt & Merkle Witness Proof (OpenTimestamps RFC-OTS-SIM)*
@@ -275,9 +275,9 @@ Hackathon/
 
 ---
 
-## 9. Production Hardening Roadmap
+## 9. Production Hardening & Simulation Boundaries
 
-Following the implementation of **NIST ECDSA P-256 Asymmetric Keypairs** and the **Verifiable Server-Side FIFO Sequencer**, the remaining items for institutional enterprise deployment are:
-1. **Hardware / Decentralized Key Storage:** Integrate WebAuthn / FIDO2 security keys or Tide Foundation Decentralized Key Shares (DKG) so private keys never leave physical hardware tokens.
-2. **Decentralized Anchor Ledger:** Periodically commit the Checkpoint Anchor hash to a public timestamping service (OpenTimestamps, Ethereum, Polygon) for cross-institutional public verifiability.
-3. **Database Layer:** For distributed multi-server clusters, back the server sequencer with PostgreSQL using `SERIALIZABLE` isolation or `SELECT ... FOR UPDATE` locks.
+This hackathon prototype implements real W3C Web Crypto primitives (`AES-GCM-256` with AAD, `SHA-256` hash chaining, `ECDSA P-256`, GF(2^8) Shamir 2-of-3 splitting), an atomic Node.js FIFO sequencer, and an in-process vulnerable API target (`custom-api-vault`). For full enterprise deployment, note the following prototype boundaries:
+1. **Hardware / Decentralized Key Storage:** Fixture keypairs in `src/services/crypto.js` and inline Shamir shares in the proposal payload are staged for deterministic demo/testing. Production deployments must move key share custody to Tide Foundation Decentralized Key Shares (DKG) or WebAuthn / FIDO2 HSM tokens.
+2. **Strict Server Auth Enforcement:** Start the sequencer with `FAIRE_STRICT_AUTH=true` when TideCloak (`localhost:8081`) is running to require cryptographically verified JWKS Bearer tokens on all mutating endpoints.
+3. **External Docker Lab Targets & Anchor Ledger:** In the Security Lab, `custom-api-vault` executes live HTTP exploit checks, whereas external targets (`owasp-juice-shop`, `owasp-crapi`, `dvwa`, `owasp-webgoat`) run baseline simulated manifest checks unless their Docker Compose stacks are launched. Periodically commit the Checkpoint Anchor hash to a public timestamping service (OpenTimestamps, Ethereum, Polygon) and back the sequencer with PostgreSQL `SERIALIZABLE` transactions for multi-node clusters.

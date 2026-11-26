@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useReducer, useState, useCallback } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState, useCallback } from "react";
 import { useKeycloak, ProtectedRoute } from "./contexts/KeycloakContext";
 import seed from "./seed.json";
 import {
   computeAuditHash,
   canonicalJsonStringify,
   signApproverVote,
+  verifyApproverVoteSignature,
   GENESIS_PREV_HASH,
 } from "./services/crypto";
 import {
@@ -16,6 +17,7 @@ import {
   serverSubmitRequest,
   serverCastVote,
   serverSimulateTamper,
+  serverRestoreAudit,
   serverReset,
   subscribeServerEvents,
   setClientAuthToken,
@@ -59,29 +61,29 @@ const actionNames = {
   panel: "Change Approver Panel Membership",
 };
 
-// Initial Genesis and Quota audit blocks with canonical sequence numbering
+// Initial Genesis and Quota audit blocks with deterministic canonical timestamps & hashes
 const initialAuditEntries = [
   {
     seq: 2,
     id: "init-02",
-    prevHash: "6c2b18aa2f8db5a6c382bb7cecf0bb3a2e379b3780d603a152ca3155ba15eec5",
-    time: new Date(Date.now() - 1800000).toISOString(),
+    prevHash: "a45aa44c58d1a701747ba429b2943210cd3b584378ac41cf129515537001942a",
+    time: "2026-10-22T08:30:00.000Z",
     actor: "Taylor Reed (Registrar)",
     action: "Course Quotas Published",
     details: { comp3100: 3, isys3414: 4, cosc2408: 3 },
     reason: "Course capacities set for COMP3100 (3 seats), ISYS3414 (4 seats), COSC2408 (3 seats).",
-    hash: "0f4435882672fa69caae03da0e6d6eb56ce30dff712217c093aee97eef9f27ba",
+    hash: "05f7a7b03bf6b02b750d14dc4ebfcaa6a3b66aae2c4a49a6d433a0245984895b",
   },
   {
     seq: 1,
     id: "init-01",
     prevHash: GENESIS_PREV_HASH,
-    time: new Date(Date.now() - 3600000).toISOString(),
+    time: "2026-10-22T08:00:00.000Z",
     actor: "FairEnrol System",
     action: "FIFO Registration System Initialized",
     details: { consensusQuorum: "2-of-3", encryption: "AES-GCM-256", hashing: "SHA-256" },
     reason: "Genesis enrollment block created. Strict FIFO waitlist algorithm deployed with 2-of-3 approver consensus requirement.",
-    hash: "6c2b18aa2f8db5a6c382bb7cecf0bb3a2e379b3780d603a152ca3155ba15eec5",
+    hash: "a45aa44c58d1a701747ba429b2943210cd3b584378ac41cf129515537001942a",
   },
 ];
 
@@ -125,16 +127,18 @@ function applyApprovedAction(state, request) {
 }
 
 function reducer(state, event) {
-  // 0. SERVER STATE SYNCHRONIZATION (Multi-Device / Cross-Network Single Source of Truth)
-  if (event.type === "sync_server_state" && event.state) {
+  // 0. SERVER & CROSS-TAB STATE SYNCHRONIZATION
+  if ((event.type === "sync_server_state" || event.type === "sync_state") && event.state) {
+    const incomingTampered = Boolean(event.state.isTampered);
     return {
       ...state,
       courses: event.state.courses || state.courses,
       students: event.state.students || state.students,
+      panel: event.state.panel || state.panel,
       requests: event.state.requests || state.requests,
       audit: event.state.audit || state.audit,
-      cleanBackup: event.state.audit || state.cleanBackup,
-      isTampered: Boolean(event.state.isTampered),
+      cleanBackup: incomingTampered ? state.cleanBackup : (event.state.audit || state.cleanBackup),
+      isTampered: incomingTampered,
     };
   }
 
@@ -650,6 +654,7 @@ export default function App() {
   const [isVerifierModalOpen, setIsVerifierModalOpen] = useState(false);
   const [isStressModalOpen, setIsStressModalOpen] = useState(false);
   const [isLiveSequencer, setIsLiveSequencer] = useState(false);
+  const skipCrossTabBroadcastRef = useRef(false);
 
   // 0. Connect to Verifiable Server Sequencer (Port 4000) & Subscribe to SSE Real-Time Stream
   useEffect(() => {
@@ -683,7 +688,7 @@ export default function App() {
 
   // Independent Anchor Checkpoint (Head hash of verified clean state)
   const checkpointHash = useMemo(() => {
-    return state.cleanBackup[0]?.hash || "0f4435882672fa69caae03da0e6d6eb56ce30dff712217c093aee97eef9f27ba";
+    return state.cleanBackup[0]?.hash || "05f7a7b03bf6b02b750d14dc4ebfcaa6a3b66aae2c4a49a6d433a0245984895b";
   }, [state.cleanBackup]);
 
   // Compute canonical hash for the next item in the pending audit queue
@@ -726,23 +731,29 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = subscribeCrossTab((msg) => {
       if (msg.type === "STATE_SYNC" && msg.payload) {
+        skipCrossTabBroadcastRef.current = true;
         dispatch({ type: "sync_state", state: msg.payload });
       }
     });
     return unsubscribe;
   }, []);
 
-  // Broadcast state changes across tabs
+  // Broadcast state changes across tabs (avoiding echo loop on received sync)
   useEffect(() => {
+    if (skipCrossTabBroadcastRef.current) {
+      skipCrossTabBroadcastRef.current = false;
+      return;
+    }
     if (state.courses.length > 0) {
       broadcastCrossTab("STATE_SYNC", {
         courses: state.courses,
+        panel: state.panel,
         requests: state.requests,
         audit: state.audit,
         isTampered: state.isTampered,
       });
     }
-  }, [state.courses, state.requests, state.audit, state.isTampered]);
+  }, [state.courses, state.panel, state.requests, state.audit, state.isTampered]);
 
   // Auto-align persona view if user logs in with Keycloak realm roles
   useEffect(() => {
@@ -896,12 +907,25 @@ export default function App() {
     setNotice(`Course quota updated to ${newCapacity} seats. Auto-promotion applied if seats freed.`);
   }
 
-  function handleTriggerPromotions() {
+  async function handleTriggerPromotions() {
     // Sweep each course and check if open seats exist with waitlisted students
     let promotedCount = 0;
-    state.courses.forEach((c) => {
+    for (const c of state.courses) {
       const openSeats = Math.max(0, c.capacity - c.enrolled.length);
       if (openSeats > 0 && c.waitlist.length > 0) {
+        if (isLiveSequencer) {
+          try {
+            await serverCapacity({
+              courseId: c.id,
+              capacity: c.capacity,
+              actor: "FairEnrol Automated Sweep",
+            });
+            promotedCount += Math.min(openSeats, c.waitlist.length);
+            continue;
+          } catch (err) {
+            console.warn("Server promotion sweep failed, falling back to local:", err);
+          }
+        }
         dispatch({
           type: "capacity",
           courseId: c.id,
@@ -910,7 +934,7 @@ export default function App() {
         });
         promotedCount += Math.min(openSeats, c.waitlist.length);
       }
-    });
+    }
 
     setNotice(
       promotedCount > 0
@@ -1029,6 +1053,96 @@ export default function App() {
     setNotice(`Consensus rejection vote recorded by ${approver.name} (ECDSA P-256).`);
   }
 
+  async function handleSimulateForgeryVote(requestId, approver) {
+    const ts = new Date().toISOString();
+    // Sign an "approve" payload, then tamper the submitted decision to "reject" (CWE-347)
+    const sigProof = await signApproverVote(approver.id, requestId, "approve", ts);
+
+    if (isLiveSequencer) {
+      try {
+        await serverCastVote({
+          approverId: approver.id,
+          approverName: approver.name,
+          requestId,
+          decision: "reject",
+          signatureProof: sigProof,
+        });
+      } catch (err) {
+        setNotice(`🛡️ [Server Sequencer] Forged vote blocked (CWE-347): ${err.message}`);
+        return;
+      }
+    }
+
+    const verification = await verifyApproverVoteSignature({
+      id: approver.id,
+      requestId,
+      decision: "reject",
+      votedAt: ts,
+      signatureProof: sigProof,
+    });
+
+    if (!verification.valid) {
+      dispatch({
+        type: "blocked",
+        actor: approver.name,
+        overrideType: "FORGED_SIGNATURE_CWE_347",
+        reason: `Forged vote attempt blocked (CWE-347): ${verification.error}`,
+      });
+      setNotice(`🛡️ Forged signature mathematically rejected (CWE-347) for ${approver.name}.`);
+    }
+  }
+
+  async function handleTamperSingle() {
+    if (isLiveSequencer) {
+      try {
+        await serverSimulateTamper("single");
+        setNotice("⚠️ [Server Sequencer] Simulated single-block tampering in server ledger.");
+        return;
+      } catch (err) {
+        console.warn("Server tamper failed, falling back to local:", err);
+      }
+    }
+    dispatch({ type: "tamper_single" });
+  }
+
+  async function handleTamperRewrite() {
+    if (isLiveSequencer) {
+      try {
+        await serverSimulateTamper("rewrite");
+        setNotice("⚠️ [Server Sequencer] Simulated full-chain rewrite attack in server ledger.");
+        return;
+      } catch (err) {
+        console.warn("Server tamper rewrite failed, falling back to local:", err);
+      }
+    }
+    dispatch({ type: "tamper_rewrite" });
+  }
+
+  async function handleRestoreAudit() {
+    if (isLiveSequencer) {
+      try {
+        await serverRestoreAudit();
+        setNotice("✓ [Server Sequencer] Clean audit ledger restored from Checkpoint Anchor.");
+        return;
+      } catch (err) {
+        console.warn("Server restore failed, falling back to local:", err);
+      }
+    }
+    dispatch({ type: "restore_audit" });
+  }
+
+  function handleApplyRaceResult(stressResult) {
+    dispatch({
+      type: "blocked",
+      actor: "FairEnrol Concurrency Stress Lab",
+      overrideType: "RACE_CONDITION_BENCHMARK",
+      reason: `Stress benchmark (${stressResult.contenderCount} simultaneous contenders on ${stressResult.courseCode}): ${stressResult.winners.length} seat(s) claimed, ${stressResult.queuedWaitlist.length} waitlisted in strict FIFO, 0.00% over-subscription (${stressResult.forensicChecksum.slice(0, 12)}…).`,
+    });
+    setNotice(
+      `✓ Stress benchmark result (${stressResult.contenderCount} contenders on ${stressResult.courseCode}) anchored to Audit Log.`
+    );
+  }
+
   function handleCustomAudit(actor, action, reason) {
     dispatch({
       type: "blocked",
@@ -1057,6 +1171,8 @@ export default function App() {
         onExportCertificate={() =>
           exportAuditCertificate(state.audit, checkpointHash, state.courses)
         }
+        onOpenVerifier={() => setIsVerifierModalOpen(true)}
+        onOpenStress={() => setIsStressModalOpen(true)}
         quarantineState={quarantineState}
         onDismissQuarantine={dismissQuarantine}
       />
@@ -1233,6 +1349,7 @@ export default function App() {
               onJoinCourse={handleJoinCourse}
               onWithdrawCourse={handleWithdrawCourse}
               onSimulateConcurrentEnrol={handleSimulateConcurrentEnrol}
+              onOpenStressModal={() => setIsStressModalOpen(true)}
               approvedRequests={approvedRequests}
               actionNames={actionNames}
               auditHistory={state.audit}
@@ -1272,6 +1389,7 @@ export default function App() {
               actionNames={actionNames}
               onVote={handleVote}
               onRejectVote={handleRejectVote}
+              onSimulateForgeryVote={handleSimulateForgeryVote}
               onInspectEvidence={(req) => setActiveEvidenceRequest(req)}
               RequestFormComponent={({ registrar }) => (
                 <RequestForm
@@ -1311,9 +1429,9 @@ export default function App() {
       <AuditLogView
         auditList={state.audit}
         checkpointHash={checkpointHash}
-        onTamperSingle={() => dispatch({ type: "tamper_single" })}
-        onTamperFullRewrite={() => dispatch({ type: "tamper_rewrite" })}
-        onRestore={() => dispatch({ type: "restore_audit" })}
+        onTamperSingle={handleTamperSingle}
+        onTamperFullRewrite={handleTamperRewrite}
+        onRestore={handleRestoreAudit}
         isTampered={state.isTampered}
         tamperMode={state.tamperMode}
         onVerificationResultChange={(result) =>
@@ -1356,6 +1474,21 @@ export default function App() {
           setActiveTab("dashboard");
           setRole("approver");
         }}
+      />
+      {/* Audit Proof Verifier Modal */}
+      <AuditProofVerifierModal
+        isOpen={isVerifierModalOpen}
+        onClose={() => setIsVerifierModalOpen(false)}
+        currentLedger={state.audit}
+        currentCheckpoint={checkpointHash}
+      />
+
+      {/* Massive Concurrency Race Stress Modal */}
+      <RaceConditionStressModal
+        isOpen={isStressModalOpen}
+        onClose={() => setIsStressModalOpen(false)}
+        courses={state.courses}
+        onApplyRaceResult={handleApplyRaceResult}
       />
     </main>
   );

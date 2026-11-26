@@ -123,7 +123,7 @@ export function logoutFromKeycloak(options = {}) {
 }
 
 /**
- * Checks whether the Keycloak server at 8081 is accessible before redirecting.
+ * Checks whether the TideCloak/Keycloak OIDC server is accessible and realm exists.
  */
 export async function checkKeycloakServerAlive() {
   try {
@@ -132,14 +132,14 @@ export async function checkKeycloakServerAlive() {
 
     const checkUrl = `${authServerUrl}/realms/${realm}/.well-known/openid-configuration`;
 
-    await fetch(checkUrl, {
+    const res = await fetch(checkUrl, {
       method: "GET",
-      mode: "no-cors",
+      mode: "cors",
       signal: controller.signal,
     });
 
     clearTimeout(timeoutId);
-    return true;
+    return res.ok;
   } catch {
     return false;
   }

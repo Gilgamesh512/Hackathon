@@ -401,10 +401,24 @@ export function buildSarifDocument(testRun) {
 
 /**
  * Generates an OASIS SARIF v2.1.0 document cryptographically signed with NIST ECDSA P-256.
- * Binds scan metrics and vulnerability findings to the Control Plane's digital notary.
+ * Uses the Control Plane backend (/api/sarif/sign) when online, with deterministic Web Crypto fallback.
  */
 export async function buildSignedSarifDocument(testRun) {
   const unsignedDoc = buildSarifDocument(testRun);
+  const isAlive = await checkLabServerAlive();
+  if (isAlive) {
+    try {
+      const res = await fetch(`${LAB_API_BASE}/sarif/sign`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sarif: unsignedDoc }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.signedSarif) return data.signedSarif;
+      }
+    } catch {}
+  }
   return signSarifDocument(unsignedDoc);
 }
 

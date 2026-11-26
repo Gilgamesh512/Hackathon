@@ -235,7 +235,11 @@ export default function SecurityLabView() {
                     <div className="target-card-top">
                       <strong className="target-title">{t.name}</strong>
                       <span className={`status-pill ${t.runtimeStatus?.status === "running" ? "online" : "idle"}`}>
-                        {t.runtimeStatus?.status === "running" ? "● Active" : "○ Idle"}
+                        {t.runtimeStatus?.status === "running"
+                          ? "● Active"
+                          : t.id === "custom-api-vault"
+                          ? "○ Auto-Start"
+                          : "○ Simulated Docker"}
                       </span>
                     </div>
 

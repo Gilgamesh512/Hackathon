@@ -17,8 +17,18 @@ function getJsonHeaders() {
   const headers = { "Content-Type": "application/json" };
   if (currentBearerToken) {
     headers["Authorization"] = `Bearer ${currentBearerToken}`;
+  } else {
+    headers["X-FairEnrol-Demo"] = "true";
   }
   return headers;
+}
+
+async function parseJsonOrThrow(res, fallbackMessage) {
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || `${fallbackMessage} (HTTP ${res.status})`);
+  }
+  return data;
 }
 
 export async function checkSequencerAlive() {
@@ -54,7 +64,7 @@ export async function serverWithdraw(payload) {
     headers: getJsonHeaders(),
     body: JSON.stringify(payload),
   });
-  return res.json();
+  return parseJsonOrThrow(res, "Withdrawal failed");
 }
 
 export async function serverCapacity(payload) {
@@ -63,7 +73,7 @@ export async function serverCapacity(payload) {
     headers: getJsonHeaders(),
     body: JSON.stringify(payload),
   });
-  return res.json();
+  return parseJsonOrThrow(res, "Capacity update failed");
 }
 
 export async function serverSubmitRequest(request) {
@@ -72,7 +82,7 @@ export async function serverSubmitRequest(request) {
     headers: getJsonHeaders(),
     body: JSON.stringify({ request }),
   });
-  return res.json();
+  return parseJsonOrThrow(res, "Proposal submission failed");
 }
 
 export async function serverCastVote(payload) {
@@ -81,11 +91,7 @@ export async function serverCastVote(payload) {
     headers: getJsonHeaders(),
     body: JSON.stringify(payload),
   });
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data.error || "Server rejected vote");
-  }
-  return data;
+  return parseJsonOrThrow(res, "Server rejected vote");
 }
 
 export async function serverSimulateTamper(mode = "single") {
@@ -94,7 +100,15 @@ export async function serverSimulateTamper(mode = "single") {
     headers: getJsonHeaders(),
     body: JSON.stringify({ mode }),
   });
-  return res.json();
+  return parseJsonOrThrow(res, "Tamper simulation failed");
+}
+
+export async function serverRestoreAudit() {
+  const res = await fetch(`${SERVER_BASE}/restore`, {
+    method: "POST",
+    headers: getJsonHeaders(),
+  });
+  return parseJsonOrThrow(res, "Audit restore failed");
 }
 
 export async function serverReset() {
@@ -102,37 +116,57 @@ export async function serverReset() {
     method: "POST",
     headers: getJsonHeaders(),
   });
-  return res.json();
+  return parseJsonOrThrow(res, "Server reset failed");
 }
 
 /**
  * Subscribes to Server-Sent Events (SSE) for live multi-computer cross-network synchronization
+ * Automatically reconnects with bounded backoff if the stream drops.
  */
 export function subscribeServerEvents(onUpdate) {
   if (typeof window === "undefined" || !window.EventSource) return () => {};
 
-  try {
-    const es = new EventSource(`${SERVER_BASE}/events`);
+  let es = null;
+  let stopped = false;
+  let reconnectTimer = null;
+  let retryDelayMs = 2000;
 
-    es.addEventListener("fairenrol_sync", (event) => {
-      try {
-        const parsed = JSON.parse(event.data);
-        onUpdate?.(parsed);
-      } catch (e) {
-        console.error("SSE parse error:", e);
-      }
-    });
+  function connect() {
+    if (stopped) return;
+    try {
+      es = new EventSource(`${SERVER_BASE}/events`);
 
-    es.onerror = () => {
-      // Stream error / connection closed
-      es.close();
-    };
+      es.addEventListener("fairenrol_connected", () => {
+        retryDelayMs = 2000;
+      });
 
-    return () => {
-      es.close();
-    };
-  } catch (err) {
-    console.debug("SSE subscription skipped:", err);
-    return () => {};
+      es.addEventListener("fairenrol_sync", (event) => {
+        try {
+          const parsed = JSON.parse(event.data);
+          onUpdate?.(parsed);
+        } catch (e) {
+          console.error("SSE parse error:", e);
+        }
+      });
+
+      es.onerror = () => {
+        es?.close();
+        if (!stopped) {
+          clearTimeout(reconnectTimer);
+          reconnectTimer = setTimeout(connect, retryDelayMs);
+          retryDelayMs = Math.min(15000, retryDelayMs * 2);
+        }
+      };
+    } catch (err) {
+      console.debug("SSE subscription skipped:", err);
+    }
   }
+
+  connect();
+
+  return () => {
+    stopped = true;
+    clearTimeout(reconnectTimer);
+    es?.close();
+  };
 }

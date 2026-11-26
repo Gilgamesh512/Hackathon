@@ -20,22 +20,23 @@ export default function EvidenceModal({
   const [reconstructedKeyInfo, setReconstructedKeyInfo] = useState(null);
   const [selectedShardIds, setSelectedShardIds] = useState(["approver-1", "approver-2"]);
 
-  if (!isOpen || !request) return null;
-
-  const encryptedData = request.confidentialEvidence;
+  const encryptedData = request?.confidentialEvidence;
 
   // Prepare Shamir shares: use stored shares or generate 3 deterministic shares
+  // Must remain unconditionally above early return to satisfy React Rules of Hooks.
   const shamirShares = useMemo(() => {
     if (encryptedData?.shamirShares && encryptedData.shamirShares.length === 3) {
       return encryptedData.shamirShares;
     }
-    // Generate deterministic 32-byte key for demo compatibility
+    // Generate deterministic 32-byte key for legacy/demo compatibility
     const demoKeyBytes = new Uint8Array(32);
     for (let i = 0; i < 32; i++) {
       demoKeyBytes[i] = (APPROVER_SECRET_KEY.charCodeAt(i % APPROVER_SECRET_KEY.length) * (i + 13)) % 256;
     }
     return splitSecretShamir(demoKeyBytes, 2, 3);
   }, [encryptedData]);
+
+  if (!isOpen || !request || !encryptedData) return null;
 
   function toggleShard(approverId) {
     setSelectedShardIds((prev) =>
@@ -151,7 +152,7 @@ export default function EvidenceModal({
           <div className="ciphertext-box">
             <div className="ciphertext-head">
               <span>Encrypted Ciphertext Payload (Public Ledger Safe)</span>
-              <span className="iv-badge">IV: {encryptedData.iv.slice(0, 10)}…</span>
+              <span className="iv-badge">IV: {encryptedData.iv?.slice(0, 10) || "N/A"}…</span>
             </div>
             <pre className="ciphertext-content">{encryptedData.ciphertext}</pre>
             {encryptedData.aad && (
@@ -175,6 +176,7 @@ export default function EvidenceModal({
             <p style={{ fontSize: "12.5px", color: "#64748b", margin: "0 0 12px 0" }}>
               No single person possesses the master decryption key. The raw AES-256 key is split into 3 mathematical polynomial shards.
               At least <strong>2 of 3</strong> authorized panel shards must be combined to reconstruct the key.
+              {" "}<em>(Prototype simulation: shards are staged in session state to demonstrate GF(2^8) reconstruction; production custody uses Tide DKG / HSM.)</em>
             </p>
 
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "10px", marginBottom: "14px" }}>

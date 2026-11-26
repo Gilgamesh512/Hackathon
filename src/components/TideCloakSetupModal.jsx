@@ -1,10 +1,20 @@
 import { useState } from "react";
-import { DOCKER_COMMAND } from "../services/tidecloak";
+import { DEFAULT_TIDECLOAK_CONFIG, DOCKER_COMMAND } from "../services/tidecloak";
 
 export default function TideCloakSetupModal({ isOpen, onClose, onReload, initError }) {
   const [copied, setCopied] = useState(false);
 
   if (!isOpen) return null;
+
+  const tideUrl = DEFAULT_TIDECLOAK_CONFIG.authServerUrl.replace(/\/$/, "");
+  const tidePort = (() => {
+    try {
+      return new URL(tideUrl).port || "8081";
+    } catch {
+      return "8081";
+    }
+  })();
+  const appOrigin = typeof window !== "undefined" ? window.location.origin : `http://localhost:${DEFAULT_TIDECLOAK_CONFIG.appPort}`;
 
   function copyDockerCommand() {
     navigator.clipboard.writeText(DOCKER_COMMAND);
@@ -27,9 +37,10 @@ export default function TideCloakSetupModal({ isOpen, onClose, onReload, initErr
 
         <div className="modal-body">
           <div className="setup-alert warning">
-            <strong>⛔ TideCloak Server Not Running (localhost:8080 Refused Connection)</strong>
+            <strong>⛔ TideCloak Server Not Running ({tideUrl} Refused Connection)</strong>
             <p>
-              Trình duyệt báo <code>localhost refused to connect</code> vì container TideCloak chưa được khởi chạy tại cổng 8080.
+              Trình duyệt chưa kết nối được tới TideCloak/Keycloak tại cổng <code>{tidePort}</code>.
+              {initError?.message ? ` (${initError.message})` : ""}
             </p>
             <p style={{ marginTop: "6px" }}>
               💡 <strong>Lưu ý cho Ban giám khảo & Nhà phát triển:</strong> Nếu máy tính chưa cài Docker hoặc WSL 2, bạn hoàn toàn có thể nhấn nút <strong>"Tiếp tục với Chế độ Sandbox Demo"</strong> bên dưới để đánh giá 100% tính năng 2-of-3 Quorum, mã hóa W3C AES-GCM-256 và sổ cái SHA-256 Hash Chain mà không cần Docker!
@@ -41,7 +52,7 @@ export default function TideCloakSetupModal({ isOpen, onClose, onReload, initErr
               <span className="step-num">1</span>
               <div className="step-content">
                 <h4>Khởi chạy TideCloak Dev Container</h4>
-                <p>Mở PowerShell với quyền quản trị viên và chạy lệnh sau:</p>
+                <p>Mở PowerShell và chạy lệnh sau (hoặc chạy <code>node setup-realm.js</code> sau khi container lên):</p>
                 <div className="code-block-row">
                   <code>{DOCKER_COMMAND}</code>
                   <button className="button outline mini" onClick={copyDockerCommand}>
@@ -49,7 +60,7 @@ export default function TideCloakSetupModal({ isOpen, onClose, onReload, initErr
                   </button>
                 </div>
                 <small style={{ color: "#77857e", display: "block", marginTop: "4px" }}>
-                  * Yêu cầu Docker Desktop và WSL 2 đã được kích hoạt.
+                  * Yêu cầu Docker Desktop (WSL 2 trên Windows).
                 </small>
               </div>
             </div>
@@ -59,13 +70,14 @@ export default function TideCloakSetupModal({ isOpen, onClose, onReload, initErr
               <div className="step-content">
                 <h4>Cấu hình Realm & Client trên Admin Console</h4>
                 <p>
-                  Truy cập <a href="http://localhost:8080/" target="_blank" rel="noreferrer">http://localhost:8080/</a> với tài khoản <code>admin / password</code>:
+                  Chạy nhanh <code>node setup-realm.js</code> hoặc truy cập{" "}
+                  <a href={`${tideUrl}/`} target="_blank" rel="noreferrer">{tideUrl}/</a> với tài khoản <code>admin / password</code>:
                 </p>
                 <ul>
-                  <li>Tạo Realm tên: <strong>fairenrol</strong></li>
-                  <li>Tạo Client tên: <strong>fairenrol-app</strong> (OpenID Connect, Public client: ON)</li>
-                  <li>Cấu hình <strong>Valid redirect URIs</strong>: <code>http://localhost:5137/*</code></li>
-                  <li>Cấu hình <strong>Web origins</strong>: <code>http://localhost:5137</code></li>
+                  <li>Tạo Realm tên: <strong>{DEFAULT_TIDECLOAK_CONFIG.realm}</strong></li>
+                  <li>Tạo Client tên: <strong>{DEFAULT_TIDECLOAK_CONFIG.clientId}</strong> (OpenID Connect, Public client: ON, PKCE S256)</li>
+                  <li>Cấu hình <strong>Valid redirect URIs</strong>: <code>{appOrigin}/*</code></li>
+                  <li>Cấu hình <strong>Web origins</strong>: <code>{appOrigin}</code></li>
                 </ul>
               </div>
             </div>

@@ -218,8 +218,53 @@ async function runSequencerTests() {
     assert.equal(authorizedRes.status, 200, "Authorized registrar token must be accepted with HTTP 200");
     console.log("  ✓ Server accepted authorized TideCloak Bearer JWT token with registrar role (HTTP 200).\n");
 
+    // TEST 6: Server Tamper & Restore + Strict Auth Enforcement
+    console.log("Test 6: Strict Auth Mode (FAIRE_STRICT_AUTH) & Audit Restore Invariant");
+    const tamperRes = await fetch(`${baseUrl}/tamper`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "single" }),
+    });
+    assert.equal(tamperRes.status, 200);
+    const tamperedState = await (await fetch(`${baseUrl}/state`)).json();
+    assert.equal(tamperedState.isTampered, true, "Server ledger should report tampered");
+
+    const restoreRes = await fetch(`${baseUrl}/restore`, { method: "POST" });
+    assert.equal(restoreRes.status, 200);
+    const restoredState = await (await fetch(`${baseUrl}/state`)).json();
+    assert.equal(restoredState.isTampered, false, "Restore must clear tampered state");
+    const restoredValid = await verifyAuditChain(restoredState.audit, restoredState.checkpointAnchor);
+    assert.equal(restoredValid.valid, true, "Restored audit chain must verify cleanly");
+
+    // Strict Auth Server rejects missing tokens AND unsigned/forged JWTs
+    const { server: strictServer } = createLabManagerServer({ strictAuth: true, oidcUrl: "http://127.0.0.1:59999" });
+    const STRICT_PORT = 4056;
+    await new Promise((resolve) => strictServer.listen(STRICT_PORT, "127.0.0.1", resolve));
+    try {
+      const strictBase = `http://127.0.0.1:${STRICT_PORT}/api/fairenrol`;
+      const anonCap = await fetch(`${strictBase}/capacity`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ courseId: "comp3100", capacity: 10 }),
+      });
+      assert.equal(anonCap.status, 401, "Strict auth mode must reject unauthenticated request with HTTP 401");
+
+      const mockJwtCap = await fetch(`${strictBase}/capacity`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${registrarToken}`,
+        },
+        body: JSON.stringify({ courseId: "comp3100", capacity: 10 }),
+      });
+      assert.equal(mockJwtCap.status, 401, "Strict auth mode must reject unverified/forged JWT signature with HTTP 401");
+      console.log("  ✓ Strict Auth mode rejected unauthenticated (401) and unsigned/forged JWT (401).\n");
+    } finally {
+      await new Promise((resolve) => strictServer.close(resolve));
+    }
+
     console.log("==================================================================");
-    console.log("  ALL SERVER SEQUENCER INVARIANT TESTS PASSED! (5/5)              ");
+    console.log("  ALL SERVER SEQUENCER INVARIANT TESTS PASSED! (6/6)              ");
     console.log("==================================================================\n");
   } finally {
     await new Promise((resolve) => server.close(resolve));
